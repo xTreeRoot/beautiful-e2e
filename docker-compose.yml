@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: beautiful-e2e-mysql
+    environment:
+      MYSQL_DATABASE: beautiful_e2e
+      MYSQL_USER: beautiful_e2e
+      MYSQL_PASSWORD: beautiful_e2e
+      MYSQL_ROOT_PASSWORD: beautiful_e2e_root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ubeautiful_e2e", "-pbeautiful_e2e"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql-data:
