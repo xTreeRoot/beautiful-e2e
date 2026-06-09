@@ -131,6 +131,7 @@ type WorkspaceModalsProps = {
   onEditingCaseStatusChange: (value: string) => void;
   onCancelCaseEdit: () => void;
   onSaveCaseEdit: () => void;
+  showToast: (type: 'success' | 'info' | 'warning' | 'error', content: string) => void;
 };
 
 export function WorkspaceModals(props: WorkspaceModalsProps) {
@@ -156,6 +157,7 @@ export function WorkspaceModals(props: WorkspaceModalsProps) {
         loading={props.isAnalyzingProject}
         onClose={props.onCloseProjectAnalysis}
         onRunAnalysis={props.onRunProjectAnalysis}
+        showToast={props.showToast}
       />
       <ProjectManagerModal
         open={props.isProjectManagerOpen}

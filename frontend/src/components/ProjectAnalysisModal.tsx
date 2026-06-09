@@ -2,10 +2,13 @@ import { Button, Empty, Flex, Input, List, Modal, Segmented, Space, Tag, Typogra
 import { FileCode2, Network, RefreshCw, Search } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Project, Repository } from '../api';
+import { useProjectKnowledgeGraph } from '../hooks/useProjectKnowledgeGraph';
+import { ProjectKnowledgeGraphPanel } from './ProjectKnowledgeGraphPanel';
 
 const { Text, Title } = Typography;
 
-type DetailView = 'overview' | 'routes' | 'dom' | 'raw';
+type DetailView = 'overview' | 'graph' | 'routes' | 'dom' | 'raw';
+type ToastType = 'success' | 'info' | 'warning' | 'error';
 
 type ProjectAnalysisModalProps = {
   open: boolean;
@@ -13,6 +16,7 @@ type ProjectAnalysisModalProps = {
   loading: boolean;
   onClose: () => void;
   onRunAnalysis: () => void;
+  showToast?: (type: ToastType, content: string) => void;
 };
 
 type IndexSummary = {
@@ -37,12 +41,23 @@ export function ProjectAnalysisModal({
   project,
   loading,
   onClose,
-  onRunAnalysis
+  onRunAnalysis,
+  showToast
 }: ProjectAnalysisModalProps) {
   const repositories = project?.repositories ?? [];
   const [selectedRepositoryId, setSelectedRepositoryId] = useState<string | null>(null);
   const [detailView, setDetailView] = useState<DetailView>('overview');
   const [routeSearch, setRouteSearch] = useState('');
+  const {
+    knowledgeGraph,
+    isLoadingKnowledgeGraph,
+    isSavingKnowledgeGraph,
+    knowledgeGraphError,
+    loadKnowledgeGraph,
+    rebuildKnowledgeGraph,
+    saveKnowledgeGraph,
+    approveKnowledgeGraph
+  } = useProjectKnowledgeGraph({ open, project, showToast });
 
   useEffect(() => {
     if (!open) return;
@@ -62,29 +77,26 @@ export function ProjectAnalysisModal({
       className="analysis-modal-shell"
       centered
       title={
-        <Flex align="center" gap={10}>
-          <Network size={18} aria-hidden="true" />
-          <span>项目分析中心</span>
+        <Flex align="center" justify="space-between" gap={16} className="analysis-modal-titlebar">
+          <Flex align="center" gap={10} className="analysis-modal-title">
+            <Network size={18} aria-hidden="true" />
+            <span>项目分析中心</span>
+          </Flex>
+          <Button
+            type="primary"
+            className="primary-button"
+            icon={<RefreshCw size={16} />}
+            loading={loading}
+            onClick={onRunAnalysis}
+          >
+            重新分析
+          </Button>
         </Flex>
       }
       open={open}
       onCancel={onClose}
-      width={980}
-      footer={[
-        <Button key="close" className="secondary-button" onClick={onClose}>
-          关闭
-        </Button>,
-        <Button
-          key="run"
-          type="primary"
-          className="primary-button"
-          icon={<RefreshCw size={16} />}
-          loading={loading}
-          onClick={onRunAnalysis}
-        >
-          重新分析
-        </Button>
-      ]}
+      width={1800}
+      footer={null}
     >
       <div className="analysis-modal-layout">
         <aside className="analysis-records" aria-label="分析记录">
@@ -124,18 +136,23 @@ export function ProjectAnalysisModal({
         </aside>
 
         <section className="analysis-detail" aria-label="分析详情">
-          {selectedRepository ? (
+          {detailView === 'graph' || selectedRepository ? (
             <>
               <Flex align="center" justify="space-between" gap={12} className="analysis-detail-title">
                 <div>
-                  <Title level={5}>{formatRepositoryKind(selectedRepository.kind)}</Title>
-                  <Text className="analysis-path">{selectedRepository.path}</Text>
+                  <Title level={5}>
+                    {detailView === 'graph' ? '项目知识图谱' : formatRepositoryKind(selectedRepository.kind)}
+                  </Title>
+                  <Text className="analysis-path">
+                    {detailView === 'graph' ? project?.name ?? '当前项目' : selectedRepository.path}
+                  </Text>
                 </div>
                 <Segmented
                   value={detailView}
                   onChange={(value) => setDetailView(value as DetailView)}
                   options={[
                     { value: 'overview', label: '概览' },
+                    { value: 'graph', label: '图谱' },
                     { value: 'routes', label: '接口' },
                     { value: 'dom', label: 'DOM' },
                     { value: 'raw', label: '原始' }
@@ -147,6 +164,14 @@ export function ProjectAnalysisModal({
                 view={detailView}
                 routeSearch={routeSearch}
                 onRouteSearchChange={setRouteSearch}
+                knowledgeGraph={knowledgeGraph}
+                isLoadingKnowledgeGraph={isLoadingKnowledgeGraph}
+                isSavingKnowledgeGraph={isSavingKnowledgeGraph}
+                knowledgeGraphError={knowledgeGraphError}
+                onReloadKnowledgeGraph={() => void loadKnowledgeGraph()}
+                onRebuildKnowledgeGraph={() => void rebuildKnowledgeGraph()}
+                onSaveKnowledgeGraph={(nextGraph, reviewStatus) => void saveKnowledgeGraph(nextGraph, reviewStatus)}
+                onApproveKnowledgeGraph={() => void approveKnowledgeGraph()}
               />
             </>
           ) : (
@@ -162,14 +187,33 @@ function AnalysisDetailContent({
   repository,
   view,
   routeSearch,
-  onRouteSearchChange
+  onRouteSearchChange,
+  knowledgeGraph,
+  isLoadingKnowledgeGraph,
+  isSavingKnowledgeGraph,
+  knowledgeGraphError,
+  onReloadKnowledgeGraph,
+  onRebuildKnowledgeGraph,
+  onSaveKnowledgeGraph,
+  onApproveKnowledgeGraph
 }: {
-  repository: Repository;
+  repository?: Repository;
   view: DetailView;
   routeSearch: string;
   onRouteSearchChange: (value: string) => void;
+  knowledgeGraph: ReturnType<typeof useProjectKnowledgeGraph>['knowledgeGraph'];
+  isLoadingKnowledgeGraph: boolean;
+  isSavingKnowledgeGraph: boolean;
+  knowledgeGraphError: string | null;
+  onReloadKnowledgeGraph: () => void;
+  onRebuildKnowledgeGraph: () => void;
+  onSaveKnowledgeGraph: (
+    nextGraph: NonNullable<ReturnType<typeof useProjectKnowledgeGraph>['knowledgeGraph']>['graph'],
+    reviewStatus?: string
+  ) => void;
+  onApproveKnowledgeGraph: () => void;
 }) {
-  const summary = indexSummary(repository);
+  const summary = repository ? indexSummary(repository) : {};
   const routes = summary.routes ?? [];
   const domTargets = summary.dom_targets ?? [];
   const signals = summary.signals ?? [];
@@ -177,6 +221,25 @@ function AnalysisDetailContent({
     () => filterRoutes(routes, routeSearch),
     [routes, routeSearch]
   );
+
+  if (view === 'graph') {
+    return (
+      <ProjectKnowledgeGraphPanel
+        graph={knowledgeGraph}
+        loading={isLoadingKnowledgeGraph}
+        saving={isSavingKnowledgeGraph}
+        error={knowledgeGraphError}
+        onReload={onReloadKnowledgeGraph}
+        onRebuild={onRebuildKnowledgeGraph}
+        onSaveGraph={onSaveKnowledgeGraph}
+        onApprove={onApproveKnowledgeGraph}
+      />
+    );
+  }
+
+  if (!repository) {
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一条分析记录查看详情" />;
+  }
 
   if (view === 'routes') {
     return (

@@ -58,6 +58,25 @@ class RepositoryOut(BaseModel):
     updated_at: datetime
 
 
+class ProjectKnowledgeGraphOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    review_status: str
+    review_notes: str | None
+    graph: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectKnowledgeGraphUpdate(BaseModel):
+    graph: dict[str, Any] = Field(default_factory=dict)
+    review_status: str | None = None
+    review_notes: str | None = None
+    actor: str | None = "developer"
+
+
 class GroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = None

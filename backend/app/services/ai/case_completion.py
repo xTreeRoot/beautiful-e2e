@@ -202,6 +202,8 @@ def build_case_generation_system_prompt() -> str:
         "先从 reference_documents 提取固定 ID、实体名称、业务名称和页面标题，"
         "不要把地名、范围词或短关键词直接当成完整业务实体。"
         "如果提供 project_context，它是所有 LLM 共享的项目级事实来源，必须优先遵守。"
+        "其中 project_context.knowledge_graph 只有在 review.status=reviewed 时才是强事实；"
+        "未审核 repository.analysis 只能作为候选证据，不能覆盖已审核入口、排除场景或变量流。"
         "认证、登录态、Cookie、session、token 和网关请求头一律由项目请求头在运行时注入；"
         "不要把登录/登出、token 提取或认证 header 占位符生成进 DSL。"
         "不要把本地文件系统路径直接变成测试步骤；应读取引用文档内容，并推断用户可见旅程。"
@@ -261,8 +263,8 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
             "文档已声明业务 ID、实体名称、业务名称或页面标题时，不要退化成只用地名、范围词或短关键词。",
             "如果 backend_repository_summary.routes 含有 Swagger/OpenAPI 或项目分析 Java DTO 的 parameters、request_body、responses，"
             "必须用它们推导请求参数、请求体和响应 extract。",
-            "如果 project_context.repositories[].analysis 含有 modules 或 relationships，"
-            "先按模块边界、scope_boundary 和变量流关系选入口与下游接口；相邻子域接口没有审核证据时不能互相替代。",
+            "如果 project_context.knowledge_graph 已审核，先按其中模块边界、入口标记、排除场景和变量流关系选入口与下游接口。",
+            "如果只有 project_context.repositories[].analysis，它只是候选证据；相邻子域接口没有审核证据时不能互相替代。",
             "如果 project_context.repositories[].route_contract_examples 含有请求体字段，"
             "必须优先使用这些字段名，不要把项目 DTO 字段改写成其他分页框架的 current/size/keyword。",
             "对需要从前置响应传递的业务参数，在生产方写 data.extract，消费方使用 {{变量}}。",

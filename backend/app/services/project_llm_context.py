@@ -10,6 +10,7 @@ from app.services.environment_auth import (
     build_environment_auth_context,
     likely_auth_header_keys_from_headers,
 )
+from app.services.project_knowledge_graph import reviewed_knowledge_graph_for_project
 from app.services.repo_reader import RepoSummary
 
 PROJECT_LLM_CONTEXT_VERSION = "project_llm_context.v1"
@@ -75,12 +76,23 @@ def build_project_llm_context(
         *[_repository_auth_profile(repo) for repo in repositories if repo.kind not in summary_profiles],
     ]
     auth_profile = merge_project_auth_profiles(environment_auth, repository_profiles)
+    knowledge_graph = reviewed_knowledge_graph_for_project(project_id, db)
 
     return {
         "version": PROJECT_LLM_CONTEXT_VERSION,
         "project_id": project_id,
         "active_environment": environment_auth.get("active_environment"),
         "auth": auth_profile,
+        "knowledge_graph": knowledge_graph,
+        "knowledge_graph_review": {
+            "status": "reviewed" if knowledge_graph else "not_reviewed",
+            "strong_fact_available": bool(knowledge_graph),
+            "guidance": (
+                "存在已审核知识图谱时，DSL 生成必须优先使用图谱模块、入口、排除场景和变量流。"
+                if knowledge_graph
+                else "当前没有已审核知识图谱；仓库分析只能作为候选证据，不能当作强事实。"
+            ),
+        },
         "repositories": [
             *[_summary_context(kind, summary) for kind, summary in (repository_summaries or {}).items()],
             *[_repository_context(repo) for repo in repositories if repo.kind not in summary_profiles],
@@ -92,8 +104,9 @@ def build_project_llm_context(
             "业务实体 ID 仍必须来自前置响应或显式测试夹具。",
             "如果生成输入提供 reference_fixtures，必须先使用其中固定 ID、实体名称、业务名称或页面标题，不要从提示词短词猜实体。",
             "接口参数必须以 repository.route_contract_examples 或 backend_repository_summary.routes 中的 parameters/request_body 为准。",
-            "接口入口、子域边界和前后置关系优先参考 repository.analysis.modules 与 relationships；"
-            "未审核关系必须保留 evidence，不要把相邻子域接口当作同一入口。",
+            "接口入口、子域边界和前后置关系优先参考已审核 project_context.knowledge_graph；"
+            "没有已审核图谱时，repository.analysis.modules 与 relationships 只能作为候选证据。",
+            "未审核关系必须保留 evidence，不要把相邻子域接口当作同一入口或互相替代。",
             "生成分页或搜索 body 时必须使用真实 DTO 字段，禁止按其他项目或框架习惯改写字段名。",
             "运行期辅助 LLM 只能从 previous_responses 抽取变量，不能用项目画像编造缺失值。",
             "后续收到 api_generation_feedback 时，必须把 404、未知处理器和变量未推导视为反例证据，重新回到项目路径内的真实路由和参数契约。",

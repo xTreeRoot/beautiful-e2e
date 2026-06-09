@@ -19,8 +19,9 @@ BACKEND_API_ROUTE_GROUNDING_PROMPT = """
    和 route_responses 推导请求参数、请求体和响应提取点；没有明确 example/default 时不要臆造业务 ID。
 8. 如果载荷提供 reference_fixtures，先使用其中的 fixed_ids 和 entity_names。文档已经给出
    业务 ID、实体名称、页面标题或展示名称时，不要退化成地名、范围词或短关键词。
-9. 如果 project_context.repositories[].analysis 提供模块归纳、scope_boundary 或 relationships，
-   必须先按这些代码证据确认入口和上下游变量流；没有审核证据时，不要把相邻子域接口互相替代。
+9. 如果 project_context.knowledge_graph 存在且 review.status=reviewed，必须先按已审核模块、
+   入口标记、排除场景和变量流关系确认入口与上下游；没有已审核图谱时，
+   project_context.repositories[].analysis 只能作为候选证据，不要把相邻子域接口互相替代。
 """.strip()
 
 
@@ -92,8 +93,9 @@ API_FACT_FEEDBACK_PROMPT = """
 
 规则：
 1. 如果运行反馈出现 404、未知处理器、无法抵达处理器、Method Not Allowed 或接口环境中 0 个正确接口，
-   首先判断为路由未命中真实项目接口；下一轮必须重新搜索 backend_repository_summary.routes、
-   project_context.repositories[].route_contract_examples 和 reference_documents，不能沿用失败 URL 的路径段。
+   首先判断为路由未命中真实项目接口；下一轮必须重新搜索 project_context.knowledge_graph、
+   backend_repository_summary.routes、project_context.repositories[].route_contract_examples
+   和 reference_documents，不能沿用失败 URL 的路径段。
 2. 如果运行反馈出现 “AI 未能推导变量”“运行期 agent 无法从前序响应推导变量” 或
    `{{变量}}` 无法解析，首先判断为缺少上游生产者接口；下一轮必须在消费者之前补充真实的
    page/list/search/query/options/detail/home/preview/create/precheck 接口，或把缺口写入

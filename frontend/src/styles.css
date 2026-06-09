@@ -166,28 +166,38 @@ select {
 
 .analysis-modal-layout {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: 16px;
-  height: clamp(320px, calc(100vh - 220px), 640px);
+  grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
+  gap: 18px;
+  height: clamp(620px, calc(100vh - 118px), 930px);
   min-height: 0;
 }
 
 .analysis-modal-shell.ant-modal {
-  max-width: calc(100vw - 32px);
+  max-width: calc(100vw - 24px);
   padding-bottom: 0;
 }
 
 .analysis-modal-shell .ant-modal-container,
 .analysis-modal-shell .ant-modal-content {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  max-height: calc(100vh - 48px);
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: calc(100vh - 24px);
   overflow: hidden;
+}
+
+.analysis-modal-titlebar {
+  width: 100%;
+  padding-right: 42px;
+}
+
+.analysis-modal-title {
+  min-width: 0;
 }
 
 .analysis-modal-shell .ant-modal-body {
   min-height: 0;
   overflow: hidden;
+  padding: 18px 28px 24px;
 }
 
 .analysis-records,
@@ -257,7 +267,7 @@ select {
 }
 
 .analysis-detail-title {
-  min-height: 48px;
+  min-height: 50px;
   border-bottom: 1px solid #eee8dc;
   padding-bottom: 12px;
 }

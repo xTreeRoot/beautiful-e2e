@@ -1,3 +1,5 @@
+import { API_BASE, request } from './api/client';
+import type { ProjectKnowledgeGraph, ProjectKnowledgeGraphUpdatePayload } from './types/projectKnowledgeGraph';
 import { streamJsonSse } from './api/streams';
 
 export type Group = {
@@ -287,25 +289,6 @@ export type AiProviderUpdatePayload = {
   codex_exec_dangerously_bypass_hook_trust?: boolean;
 };
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {})
-    },
-    ...init
-  });
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `请求失败：${response.status}`);
-  }
-
-  return response.json() as Promise<T>;
-}
-
 async function streamGenerateCase(
   path: string,
   payload: GenerateCasePayload,
@@ -406,6 +389,20 @@ export const api = {
     projectId: string,
     onEvent?: (event: ProjectAnalysisStreamEvent) => void
   ) => streamProjectAnalysis(`/projects/${projectId}/analyze/stream`, onEvent),
+  getProjectKnowledgeGraph: (projectId: string) =>
+    request<ProjectKnowledgeGraph>(`/projects/${projectId}/knowledge-graph`),
+  rebuildProjectKnowledgeGraph: (projectId: string) =>
+    request<ProjectKnowledgeGraph>(`/projects/${projectId}/knowledge-graph/rebuild`, {
+      method: 'POST'
+    }),
+  updateProjectKnowledgeGraph: (
+    projectId: string,
+    payload: ProjectKnowledgeGraphUpdatePayload
+  ) =>
+    request<ProjectKnowledgeGraph>(`/projects/${projectId}/knowledge-graph`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    }),
   updateProject: (
     projectId: string,
     payload: {

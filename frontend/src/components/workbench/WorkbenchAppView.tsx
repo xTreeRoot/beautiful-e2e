@@ -447,6 +447,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
         onSaveCaseEdit={() => {
           if (editingCaseId) void updateManagedCase(editingCaseId);
         }}
+        showToast={showToast}
       />
     </ConfigProvider>
   );

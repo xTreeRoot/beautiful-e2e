@@ -217,6 +217,9 @@ def _compact_project_context(value: Any) -> Any:
             for repository in repositories[:6]
             if isinstance(repository, dict)
         ]
+    knowledge_graph = compacted.get("knowledge_graph")
+    if isinstance(knowledge_graph, dict):
+        compacted["knowledge_graph"] = _compact_knowledge_graph(knowledge_graph)
     return compacted
 
 
@@ -325,6 +328,85 @@ def _compact_analysis_relationship(item: dict[str, Any]) -> dict[str, Any]:
             for evidence in (item.get("evidence") or [])[:4]
             if isinstance(evidence, str)
         ],
+    }
+
+
+def _compact_knowledge_graph(graph: dict[str, Any]) -> dict[str, Any]:
+    modules = graph.get("modules")
+    relationships = graph.get("relationships")
+    compacted = {
+        "version": graph.get("version"),
+        "review": graph.get("review"),
+        "summary": graph.get("summary"),
+        "generation_policy": graph.get("generation_policy"),
+    }
+    if isinstance(modules, list):
+        compacted["modules"] = [
+            _compact_knowledge_module(module)
+            for module in modules[:12]
+            if isinstance(module, dict)
+        ]
+    if isinstance(relationships, list):
+        compacted["relationships"] = [
+            _compact_knowledge_relationship(item)
+            for item in relationships[:24]
+            if isinstance(item, dict)
+        ]
+    return {key: value for key, value in compacted.items() if value not in (None, "", [], {})}
+
+
+def _compact_knowledge_module(module: dict[str, Any]) -> dict[str, Any]:
+    routes = module.get("routes")
+    return {
+        "id": module.get("id"),
+        "name": module.get("name"),
+        "domain": module.get("domain"),
+        "repository_kind": module.get("repository_kind"),
+        "review_status": module.get("review_status"),
+        "scope_boundary": _trim_text(module.get("scope_boundary"), 260),
+        "entrypoint_route_ids": module.get("entrypoint_route_ids"),
+        "routes": [
+            _compact_knowledge_route(route)
+            for route in (routes or [])[:8]
+            if isinstance(route, dict)
+        ],
+        "evidence": [
+            _trim_text(item, 220)
+            for item in (module.get("evidence") or [])[:4]
+            if isinstance(item, str)
+        ],
+    }
+
+
+def _compact_knowledge_route(route: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": route.get("id"),
+        "method": route.get("method"),
+        "path": route.get("path"),
+        "summary": _trim_text(route.get("summary"), 160),
+        "source": _trim_text(route.get("source"), 180),
+        "role": route.get("role"),
+        "produces": route.get("produces"),
+        "consumes": route.get("consumes"),
+        "applicable_scenarios": _string_list(route.get("applicable_scenarios"), 4, 160),
+        "excluded_scenarios": _string_list(route.get("excluded_scenarios"), 4, 180),
+        "review_status": route.get("review_status"),
+    }
+
+
+def _compact_knowledge_relationship(item: dict[str, Any]) -> dict[str, Any]:
+    from_route = item.get("from_route") if isinstance(item.get("from_route"), dict) else {}
+    to_route = item.get("to_route") if isinstance(item.get("to_route"), dict) else {}
+    return {
+        "id": item.get("id"),
+        "type": item.get("type"),
+        "variable": item.get("variable"),
+        "from_route": _compact_route(from_route),
+        "to_route": _compact_route(to_route),
+        "confidence": item.get("confidence"),
+        "confirmed": item.get("confirmed"),
+        "reason": _trim_text(item.get("reason"), 220),
+        "review_status": item.get("review_status"),
     }
 
 

@@ -10,6 +10,7 @@ from app.services.api_generation_feedback import attach_api_generation_feedback
 from app.services.api_entrypoint_flow import enforce_api_entrypoint_flow
 from app.services.api_flow_diagnostics import annotate_api_flow_diagnostics
 from app.services.api_route_contract_enforcer import enforce_api_route_contracts
+from app.services.api_step_sanitizer import has_executable_api_step, sanitize_backend_api_steps
 from app.services.ai.base import CaseGenerationContext, CaseGenerationError, CaseGenerationProvider
 from app.services.ai.codex_bridge import CodexBridgeCaseProvider, OpenAICompatibleCaseProvider
 from app.services.ai.codex_exec import CodexExecCaseProvider
@@ -174,12 +175,16 @@ def _annotate_generated_case(
         context.backend.routes,
         context.reference_documents,
     )
+    enforced = sanitize_backend_api_steps(enforced, context.backend.routes)
     enforced = enforce_api_entrypoint_flow(
         enforced,
         prompt=context.prompt,
         routes=context.backend.routes,
         reference_documents=context.reference_documents,
     )
+    enforced = sanitize_backend_api_steps(enforced, context.backend.routes)
+    if not has_executable_api_step(enforced):
+        raise CaseGenerationError("生成结果只包含认证说明或不可执行接口节点，已拒绝保存。")
     enforced = GeneratedCase(
         title=enforced.title,
         description=enforced.description,

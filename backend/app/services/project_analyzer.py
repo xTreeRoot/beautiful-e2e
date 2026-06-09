@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AuditEvent, Repository
 from app.services.project_llm_context import analyze_repository_auth_profile
+from app.services.project_knowledge_graph import upsert_candidate_knowledge_graph
 from app.services.project_route_analysis import build_project_route_analysis
 from app.services.repo_reader import RepoReader, RepoSummary
 
@@ -118,6 +119,21 @@ class ProjectAnalyzer:
                 "repository_kind": kind,
                 "repository_id": repo.id,
             }
+
+        knowledge_graph = upsert_candidate_knowledge_graph(project_id, repositories, db, actor)
+        graph_payload = knowledge_graph.graph if isinstance(knowledge_graph.graph, dict) else {}
+        graph_summary = graph_payload.get("summary") if isinstance(graph_payload.get("summary"), dict) else {}
+        yield {
+            "message": (
+                "项目知识图谱候选已生成："
+                f"{graph_summary.get('module_count', 0)} 个模块、"
+                f"{graph_summary.get('relationship_count', 0)} 条关系，等待人工审核。"
+            ),
+            "stage": "knowledge_graph",
+            "module_count": graph_summary.get("module_count", 0),
+            "relationship_count": graph_summary.get("relationship_count", 0),
+            "review_status": knowledge_graph.review_status,
+        }
 
         db.add(
             AuditEvent(

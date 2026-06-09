@@ -1,0 +1,237 @@
+.knowledge-graph-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  padding-top: 12px;
+}
+
+.knowledge-graph-toolbar {
+  min-height: 40px;
+}
+
+.knowledge-graph-alert {
+  margin-bottom: 2px;
+}
+
+.knowledge-graph-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(420px, 1.35fr) minmax(340px, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.knowledge-graph-column {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #eee8dc;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.knowledge-graph-column-title {
+  min-height: 42px;
+  border-bottom: 1px solid #eee8dc;
+  padding: 0 12px;
+}
+
+.knowledge-graph-scroll,
+.knowledge-module-list.ant-list {
+  min-height: 0;
+  overflow: auto;
+}
+
+.knowledge-module-row.ant-list-item {
+  cursor: pointer;
+  border-block-end: 1px solid #eee8dc !important;
+  padding: 12px;
+}
+
+.knowledge-module-row.ant-list-item:hover,
+.knowledge-module-row.ant-list-item.active {
+  background: #eef8f5;
+}
+
+.knowledge-module-main {
+  width: 100%;
+  min-width: 0;
+}
+
+.knowledge-module-copy {
+  min-width: 0;
+}
+
+.knowledge-module-action.ant-btn {
+  flex: 0 0 auto;
+}
+
+.knowledge-scope-strip {
+  display: grid;
+  gap: 2px;
+  border-bottom: 1px solid #eee8dc;
+  background: #fbfaf7;
+  padding: 9px 12px;
+}
+
+.knowledge-relationship-card,
+.knowledge-route-card,
+.knowledge-evidence-card {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid #eee8dc;
+  padding: 12px;
+}
+
+.knowledge-relationship-card.rejected {
+  background: #fff8f6;
+}
+
+.knowledge-relationship-card:last-child,
+.knowledge-route-card:last-child,
+.knowledge-evidence-card:last-child {
+  border-bottom: 0;
+}
+
+.knowledge-route-flow {
+  min-width: 0;
+}
+
+.knowledge-flow-line {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 28px minmax(180px, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.knowledge-flow-arrow {
+  color: #8a6d4d;
+  text-align: center;
+}
+
+.knowledge-route-ref {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  border: 1px solid #eee8dc;
+  border-radius: 8px;
+  background: #fbfaf7;
+  padding: 8px;
+}
+
+.knowledge-route-ref .ant-typography,
+.knowledge-route-card .ant-typography,
+.knowledge-evidence-card .ant-typography {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-route-ref .ant-typography {
+  display: block;
+}
+
+.knowledge-graph-note.ant-typography {
+  margin: 0;
+  color: #6b6257;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.knowledge-route-list,
+.knowledge-evidence-list {
+  display: grid;
+  align-content: start;
+}
+
+.knowledge-card-actions {
+  padding-top: 2px;
+}
+
+.knowledge-module-editor {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid #eee8dc;
+  background: #fbfaf7;
+  padding: 12px;
+}
+
+.knowledge-editor-field {
+  display: grid;
+  gap: 5px;
+}
+
+.knowledge-route-tags {
+  min-width: 0;
+}
+
+.knowledge-evidence-list h5.ant-typography {
+  margin: 12px 12px 4px;
+}
+
+.knowledge-evidence-list > .knowledge-graph-note {
+  margin: 0 12px 10px;
+}
+
+.knowledge-evidence-list > .knowledge-evidence-lines {
+  margin: 0 12px 10px;
+}
+
+.knowledge-evidence-lines {
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-evidence-line.ant-typography {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #eee8dc;
+  border-radius: 8px;
+  background: #fbfaf7;
+  padding: 7px 8px;
+  color: #6b6257;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-graph-loading,
+.knowledge-graph-empty {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  min-height: 280px;
+}
+
+@media (max-width: 1280px) {
+  .knowledge-graph-layout {
+    grid-template-columns: minmax(220px, 0.75fr) minmax(360px, 1.25fr) minmax(300px, 0.95fr);
+  }
+
+  .knowledge-flow-line {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-flow-arrow {
+    text-align: left;
+  }
+}
+
+@media (max-width: 920px) {
+  .knowledge-graph-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-graph-column {
+    min-height: 220px;
+  }
+}

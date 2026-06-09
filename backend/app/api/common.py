@@ -15,6 +15,7 @@ from app.models import (
     CaseComment,
     Project,
     ProjectEnvironmentConfig,
+    ProjectKnowledgeGraph,
     Repository,
     SkillProfile,
     TestCase,
@@ -133,6 +134,7 @@ def delete_project_dependents(project_id: str, db: Session) -> None:
     db.execute(delete(TestCase).where(TestCase.project_id == project_id))
     db.execute(delete(TestGroup).where(TestGroup.project_id == project_id))
     db.execute(delete(ProjectEnvironmentConfig).where(ProjectEnvironmentConfig.project_id == project_id))
+    db.execute(delete(ProjectKnowledgeGraph).where(ProjectKnowledgeGraph.project_id == project_id))
     db.execute(delete(Repository).where(Repository.project_id == project_id))
     db.execute(delete(AgentProfile).where(AgentProfile.project_id == project_id))
     db.execute(delete(SkillProfile).where(SkillProfile.project_id == project_id))

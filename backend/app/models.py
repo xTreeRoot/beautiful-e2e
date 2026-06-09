@@ -31,6 +31,9 @@ class Project(TimestampMixin, Base):
     repositories: Mapped[list[Repository]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    knowledge_graphs: Mapped[list[ProjectKnowledgeGraph]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
     environment_configs: Mapped[list[ProjectEnvironmentConfig]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
@@ -62,6 +65,25 @@ class Repository(TimestampMixin, Base):
     index_summary: Mapped[dict | None] = mapped_column(JSON)
 
     project: Mapped[Project] = relationship(back_populates="repositories")
+
+
+class ProjectKnowledgeGraph(TimestampMixin, Base):
+    """项目级链路事实图谱。
+
+    图谱内容是项目分析的候选事实和人工审核后的强事实载体。生成 DSL 时只把
+    `review_status=reviewed` 的图谱当作强约束，未审核内容只能作为候选证据。
+    """
+
+    __tablename__ = "project_knowledge_graphs"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_project_knowledge_graph_project"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    review_status: Mapped[str] = mapped_column(String(40), nullable=False, default="draft")
+    review_notes: Mapped[str | None] = mapped_column(Text)
+    graph: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
+    project: Mapped[Project] = relationship(back_populates="knowledge_graphs")
 
 
 class ProjectEnvironmentConfig(TimestampMixin, Base):

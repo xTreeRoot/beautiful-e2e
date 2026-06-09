@@ -8,17 +8,19 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from app.api.cases import _effective_execution_mode
-from app.models import Project, Repository
+from app.models import Project, ProjectKnowledgeGraph, Repository
 from app.services.api_entrypoint_flow import enforce_api_entrypoint_flow
 from app.services.api_flow_diagnostics import annotate_api_flow_diagnostics
 from app.services.api_generation_feedback import attach_api_generation_feedback
 from app.services.api_route_contract_enforcer import enforce_api_route_contracts
+from app.services.api_step_sanitizer import has_executable_api_step, sanitize_backend_api_steps
 from app.services.ai.base import CaseGenerationContext, CaseGenerationError
 from app.services.ai.case_completion import CompletionCaseProvider, build_case_generation_payload
 from app.services.ai_case_generator import CaseGenerator, GeneratedCase, GeneratedStep
 from app.services.generation_context import build_generation_context
 from app.services.prompt_references import PromptReferenceReader
 from app.services.project_analyzer import ProjectAnalyzer
+from app.services.project_knowledge_graph import with_review_status
 from app.services.project_llm_context import build_project_llm_context
 from app.services.repo_reader import RepoReader, RepoSummary
 
@@ -1026,6 +1028,77 @@ def test_rule_based_generation_does_not_inject_login_steps_from_prompt() -> None
     assert generated.code_context["auth_context"]["effective_mode"] == "project_request_headers"
 
 
+def test_backend_api_sanitizer_drops_auth_guidance_pseudo_step() -> None:
+    generated = GeneratedCase(
+        title="客户端接口链路",
+        description="客户端接口链路",
+        priority="P1",
+        graph={"nodes": [], "edges": []},
+        code_context={"execution_mode": "backend_api"},
+        steps=[
+            GeneratedStep(
+                kind="api",
+                label="匿名可调，如果本地已有登录态，也可以带 Authorization",
+                action="api_request",
+                target_url="/api/pb/",
+                data={
+                    "method": "GET",
+                    "expected_status": 200,
+                    "route_source": "evidence/client-api-map.md",
+                    "route_summary": "匿名可调，如果本地已有登录态，也可以带 Authorization，部分接口会返回用户相关状态。",
+                    "route_path_template": "/api/pb/",
+                },
+            ),
+            GeneratedStep(
+                kind="api",
+                label="查询资源列表",
+                action="api_request",
+                target_url="/api/pb/resources/page",
+                data={"method": "POST", "expected_status": 200},
+            ),
+        ],
+    )
+
+    sanitized = sanitize_backend_api_steps(
+        generated,
+        [{"method": "POST", "path": "/api/pb/resources/page", "summary": "资源分页"}],
+    )
+
+    assert [step.label for step in sanitized.steps] == ["查询资源列表"]
+    assert has_executable_api_step(sanitized) is True
+    dropped = sanitized.code_context["dropped_non_executable_api_steps"]["items"][0]
+    assert dropped["target_url"] == "/api/pb/"
+    assert "认证" in dropped["reason"] or "前缀" in dropped["reason"]
+
+
+def test_backend_api_sanitizer_marks_all_auth_guidance_steps_non_executable() -> None:
+    generated = GeneratedCase(
+        title="认证说明",
+        description="认证说明",
+        priority="P1",
+        graph={"nodes": [], "edges": []},
+        code_context={"execution_mode": "backend_api"},
+        steps=[
+            GeneratedStep(
+                kind="api",
+                label="本地已有登录态时带 Authorization",
+                action="api_request",
+                target_url="/api/pb/",
+                data={
+                    "method": "GET",
+                    "route_summary": "登录态说明，不是业务接口。",
+                    "route_path_template": "/api/pb/",
+                },
+            )
+        ],
+    )
+
+    sanitized = sanitize_backend_api_steps(generated, [])
+
+    assert sanitized.steps == []
+    assert has_executable_api_step(sanitized) is False
+
+
 def test_case_generation_payload_extracts_explicit_flow_entrypoint() -> None:
     context = CaseGenerationContext(
         prompt="不要直接测目标业务页，要从客户端资源分页查询开始，再进入详情和目标业务完整流程",
@@ -1245,11 +1318,17 @@ def test_project_analyzer_groups_routes_and_relationships_with_code_evidence(
                 Repository.kind == "backend",
             )
         )
+        knowledge_graph = db.scalar(
+            select(ProjectKnowledgeGraph).where(ProjectKnowledgeGraph.project_id == project.id)
+        )
         project_context = build_project_llm_context(project.id, {}, db)
 
     assert repository is not None
+    assert knowledge_graph is not None
     analysis = repository.index_summary["analysis"]
+    graph = knowledge_graph.graph
     modules = {module["id"]: module for module in analysis["modules"]}
+    graph_modules = {module["source_module_id"]: module for module in graph["modules"]}
     resource_routes = {
         route["path"]: route
         for route in modules["module_resources"]["routes"]
@@ -1275,7 +1354,115 @@ def test_project_analyzer_groups_routes_and_relationships_with_code_evidence(
     assert resource_relationship["to_module"] == "module_workflows_resources"
     assert resource_relationship["confirmed"] is False
     assert "source=" in resource_relationship["evidence"][0]
+    assert knowledge_graph.review_status == "draft"
+    assert graph["review"]["fact_strength"] == "candidate"
+    assert graph_modules["module_resources_special"]["routes"][0]["excluded_scenarios"]
     assert project_context["repositories"][0]["analysis"]["modules"]
+    assert project_context["knowledge_graph"] is None
+
+
+def test_reviewed_project_knowledge_graph_is_promoted_to_generation_context(
+    tmp_path,
+    mysql_engine: Engine,
+) -> None:
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "pom.xml").write_text("<project />", encoding="utf-8")
+    (backend / "RecordController.java").write_text(
+        """
+        public class RecordController {
+            @Operation(summary = "记录分页查询")
+            @PostMapping("/api/public/records/page")
+            public void page() {}
+
+            @Operation(summary = "流程首页")
+            @GetMapping("/api/public/process/records/{recordId}/home")
+            public void home() {}
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    with Session(mysql_engine) as db:
+        project = Project(name="reviewed-knowledge-graph-test")
+        db.add(project)
+        db.flush()
+        ProjectAnalyzer().analyze(
+            project.id,
+            {
+                "workspace_path": str(tmp_path),
+                "frontend_repo_path": "",
+                "backend_repo_path": "",
+            },
+            db,
+        )
+        graph_row = db.scalar(
+            select(ProjectKnowledgeGraph).where(ProjectKnowledgeGraph.project_id == project.id)
+        )
+        assert graph_row is not None
+        graph_row.review_status = "reviewed"
+        graph_row.graph = with_review_status(graph_row.graph, "reviewed")
+        reviewed_graph = graph_row.graph
+        db.commit()
+
+        project_context = build_project_llm_context(project.id, {}, db)
+
+    graph_modules = reviewed_graph["modules"]
+    graph_relationships = reviewed_graph["relationships"]
+    assert graph_modules
+    assert graph_modules[0]["review_status"] == "reviewed"
+    assert graph_modules[0]["routes"][0]["review_status"] == "reviewed"
+    assert graph_relationships
+    assert graph_relationships[0]["review_status"] == "reviewed"
+    assert graph_relationships[0]["confirmed"] is True
+
+    context = CaseGenerationContext(
+        prompt="从记录分页查询开始，再进入流程首页",
+        frontend=RepoSummary(path=None, exists=False, files=[], signals=[]),
+        backend=RepoSummary(path=str(backend), exists=True, files=[], signals=[], routes=[]),
+        execution_mode="backend_api",
+        project_context=project_context,
+        auth_context=project_context["auth"],
+    )
+    payload = build_case_generation_payload(context)
+
+    assert payload["project_context"]["knowledge_graph"]["review"]["status"] == "reviewed"
+    assert payload["project_context"]["knowledge_graph"]["review"]["fact_strength"] == "strong"
+    assert payload["project_context"]["knowledge_graph_review"]["strong_fact_available"] is True
+    assert any("knowledge_graph" in rule for rule in payload["reference_document_rules"])
+
+
+def test_reviewed_project_knowledge_graph_keeps_rejected_relationships() -> None:
+    graph = {
+        "modules": [
+            {
+                "id": "module_records",
+                "review_status": "draft",
+                "routes": [{"id": "route_records_page", "review_status": "draft"}],
+            }
+        ],
+        "relationships": [
+            {
+                "id": "rel_allowed",
+                "review_status": "draft",
+                "confirmed": False,
+            },
+            {
+                "id": "rel_rejected",
+                "review_status": "rejected",
+                "confirmed": True,
+            },
+        ],
+    }
+
+    reviewed_graph = with_review_status(graph, "reviewed")
+
+    assert reviewed_graph["modules"][0]["review_status"] == "reviewed"
+    assert reviewed_graph["modules"][0]["routes"][0]["review_status"] == "reviewed"
+    assert reviewed_graph["relationships"][0]["review_status"] == "reviewed"
+    assert reviewed_graph["relationships"][0]["confirmed"] is True
+    assert reviewed_graph["relationships"][1]["review_status"] == "rejected"
+    assert reviewed_graph["relationships"][1]["confirmed"] is False
 
 
 def test_project_analyzer_persists_auth_profile_for_shared_llm_context(
