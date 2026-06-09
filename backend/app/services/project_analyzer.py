@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AuditEvent, Repository
 from app.services.project_llm_context import analyze_repository_auth_profile
+from app.services.project_route_analysis import build_project_route_analysis
 from app.services.repo_reader import RepoReader, RepoSummary
 
 REPOSITORY_KIND_LABELS = {
@@ -96,7 +97,19 @@ class ProjectAnalyzer:
                 "repository_kind": kind,
                 "auth_mode": auth_profile.get("mode_hint"),
             }
-            summary = replace(summary, auth_profile=auth_profile)
+            route_analysis = build_project_route_analysis(kind, summary)
+            yield {
+                "message": (
+                    f"{self._kind_label(kind)}仓库模块归纳完成："
+                    f"{len(route_analysis.get('modules') or [])} 个模块、"
+                    f"{len(route_analysis.get('relationships') or [])} 条接口关系。"
+                ),
+                "stage": "route_analysis",
+                "repository_kind": kind,
+                "module_count": len(route_analysis.get("modules") or []),
+                "relationship_count": len(route_analysis.get("relationships") or []),
+            }
+            summary = replace(summary, auth_profile=auth_profile, analysis=route_analysis)
             repo = self._upsert_repository(project_id, kind, raw_path, summary, db)
             repositories.append(repo)
             yield {
@@ -120,6 +133,11 @@ class ProjectAnalyzer:
                             "path": repo.path,
                             "routes": len((repo.index_summary or {}).get("routes", [])),
                             "dom_targets": len((repo.index_summary or {}).get("dom_targets", [])),
+                            "modules": len(
+                                ((repo.index_summary or {}).get("analysis") or {}).get(
+                                    "modules", []
+                                )
+                            ),
                             "auth_mode": (repo.index_summary or {})
                             .get("auth_profile", {})
                             .get("mode_hint"),
@@ -207,9 +225,9 @@ class ProjectAnalyzer:
             select(Repository).where(Repository.project_id == project_id, Repository.kind == kind)
         )
         clean_path = raw_path.strip()
-        index_summary = {
-            **summary.as_dict(),
-            "analysis": {
+        analysis = dict(summary.analysis or {})
+        analysis.update(
+            {
                 "kind": kind,
                 "analyzed_at": datetime.now(UTC).isoformat(),
                 "route_count": len(summary.routes),
@@ -220,7 +238,11 @@ class ProjectAnalyzer:
                     [route for route in summary.routes if isinstance(route.get("parameters"), list)]
                 ),
                 "dom_target_count": len(summary.dom_targets),
-            },
+            }
+        )
+        index_summary = {
+            **summary.as_dict(),
+            "analysis": analysis,
         }
         if repo is None:
             repo = Repository(

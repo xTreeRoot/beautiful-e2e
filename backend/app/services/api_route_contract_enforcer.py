@@ -24,9 +24,9 @@ BODY_FIELD_ALIASES = {
     "current": ("page", "pageNo", "pageNum"),
     "pageSize": ("limit", "size"),
     "size": ("limit", "pageSize"),
-    "keyword": ("goodsName", "name", "title", "keyword"),
-    "keywords": ("goodsName", "name", "title", "keyword"),
-    "query": ("goodsName", "name", "title", "keyword"),
+    "keyword": ("name", "title", "keyword"),
+    "keywords": ("name", "title", "keyword"),
+    "query": ("name", "title", "keyword"),
 }
 
 def enforce_api_route_contracts(
@@ -422,6 +422,10 @@ def _body_field_target(field: str, allowed: set[str]) -> str | None:
     for candidate in BODY_FIELD_ALIASES.get(field, ()):
         if candidate in allowed:
             return candidate
+    if _is_search_name_field(field):
+        for candidate in allowed:
+            if _is_search_name_field(candidate):
+                return candidate
     lowered_allowed = {item.lower(): item for item in allowed}
     return lowered_allowed.get(field.lower())
 
@@ -484,14 +488,11 @@ def _reference_fixture_body_value(
 
 def _is_search_name_field(field: str) -> bool:
     normalized = field.replace("_", "").lower()
-    return normalized in {
-        "goodsname",
-        "campaignname",
-        "activityname",
-        "displaytitle",
-        "name",
-        "title",
-    }
+    return bool(
+        normalized in {"name", "title", "displaytitle", "keyword", "query", "searchtext"}
+        or normalized.endswith("name")
+        or normalized.endswith("title")
+    )
 
 
 def _route_looks_like_search(route: dict[str, Any]) -> bool:

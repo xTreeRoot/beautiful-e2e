@@ -113,7 +113,7 @@ def test_generate_case_with_target_replaces_existing_case(
 
         created = create_case(
             project.id,
-            CaseCreate(title="OIOI 全流程客户端测试", group_id=target_group_id, priority="P0"),
+            CaseCreate(title="通用全流程客户端测试", group_id=target_group_id, priority="P0"),
             db,
         )
         created_id = created.id
@@ -131,7 +131,7 @@ def test_generate_case_with_target_replaces_existing_case(
         regenerated = generate_case(
             project.id,
             GenerateCaseRequest(
-                description="重新生成 OIOI 全流程客户端测试",
+                description="重新生成 通用全流程客户端测试",
                 target_case_id=created_id,
                 title=created.title,
                 case_description=created.description,
@@ -154,7 +154,7 @@ def test_generate_case_with_target_replaces_existing_case(
     assert regenerated.id == created_id
     assert case_count == 1
     assert regenerated.group_id == target_group_id
-    assert regenerated.title == "OIOI 全流程客户端测试"
+    assert regenerated.title == "通用全流程客户端测试"
     assert regenerated.priority == "P0"
     assert regenerated.playwright_spec_path is None
     assert regenerated.steps
@@ -477,7 +477,7 @@ def test_stream_backend_api_single_step_debug_does_not_use_runtime_agent(
             kind="api",
             label="需要手工参数的接口",
             action="api_request",
-            target_url="/orders/{{order_id}}",
+            target_url="/entities/{{entity_id}}",
             expected="200",
             data={"method": "GET", "expected_status": 200},
         )
@@ -509,7 +509,7 @@ def test_stream_backend_api_single_step_debug_does_not_use_runtime_agent(
 
     assert response.status_code == 200
     assert event_names == ["start", "result", "done"]
-    assert "单节点调试未填写变量：order_id" in result_payload["error"]
+    assert "单节点调试未填写变量：entity_id" in result_payload["error"]
     assert done_payload["total"] == 1
     assert done_payload["status"] == "failed"
 
@@ -718,20 +718,20 @@ def test_api_runner_still_requires_missing_business_variable_in_body() -> None:
         id="step-body",
         order_index=1,
         kind="api",
-        label="兑换权益",
+        label="执行业务动作",
         action="api_request",
-        target_url="/customer/api/pd/prize/exchange",
+        target_url="/api/private/demo/execute",
         data={
             "method": "POST",
             "expected_status": 200,
-            "body": {"entitlement_id": "{{entitlement_id}}"},
+            "body": {"business_token": "{{business_token}}"},
         },
     )
 
     with pytest.raises(MissingApiFlowVariableError) as error:
         runner.build_request(step, variables={})
 
-    assert "entitlement_id" in str(error.value)
+    assert "business_token" in str(error.value)
 
 
 def test_runtime_agent_inferrs_missing_variable_from_previous_response() -> None:
@@ -792,14 +792,14 @@ def test_runtime_agent_prompt_receives_shared_project_context() -> None:
         id="step-2",
         order_index=2,
         kind="api",
-        label="兑换权益",
+        label="执行业务动作",
         action="api_request",
-        target_url="/customer/api/pd/prize/exchange",
-        data={"body": {"entitlement_id": "{{entitlement_id}}"}},
+        target_url="/api/private/demo/execute",
+        data={"body": {"business_token": "{{business_token}}"}},
     )
 
     inference = agent.infer_missing_variable(
-        variable="entitlement_id",
+        variable="business_token",
         step=step,
         known_variables={},
         response_history=[

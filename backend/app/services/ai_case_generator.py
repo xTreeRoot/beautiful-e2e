@@ -6,6 +6,7 @@ from app.services.api_case_steps import ApiCaseStepBuilder
 from app.services.case_generation_types import GeneratedCase, GeneratedStep
 from app.services.case_graph_builder import build_case_graph
 from app.services.document_case_steps import DocumentCaseStepBuilder, reference_indexes
+from app.services.dsl_auth_context import build_dsl_auth_context, build_dsl_project_context
 from app.services.generation_prompts import (
     API_FLOW_RELATIONSHIP_PROMPT,
     API_FACT_FEEDBACK_PROMPT,
@@ -91,9 +92,6 @@ class CaseGenerator:
         )
         if document_steps:
             steps.extend(document_steps)
-
-        if any(token in normalized for token in ["登录", "登陆", "账号"]) or "login" in lower:
-            steps.extend(self._login_steps())
 
         if any(token in normalized for token in ["搜索", "查询"]) or "search" in lower:
             steps.extend(
@@ -198,8 +196,8 @@ class CaseGenerator:
             "agent": agent,
             "skills": skills or [],
             "canvas_dsl": canvas_dsl,
-            "project_context": project_context,
-            "auth_context": auth_context,
+            "project_context": build_dsl_project_context(project_context, auth_context),
+            "auth_context": build_dsl_auth_context(project_context, auth_context),
             "reference_documents": reference_indexes(reference_documents),
             "reference_fixtures": compact_reference_fixtures(
                 extract_reference_fixtures(reference_documents)
@@ -221,44 +219,6 @@ class CaseGenerator:
         return any(token in prompt for token in ["提交", "保存", "创建", "新增", "确认", "发起"]) or any(
             token in lower for token in ["submit", "save", "create", "confirm", "apply"]
         )
-
-    def _login_steps(self) -> list[GeneratedStep]:
-        return [
-            GeneratedStep(
-                kind="action",
-                label="进入登录页",
-                action="goto",
-                target_url="/login",
-                expected="登录表单可见",
-            ),
-            GeneratedStep(
-                kind="action",
-                label="填写用户名",
-                action="fill",
-                selector="[data-testid='username'], input[name='username']",
-                value="e2e_user",
-            ),
-            GeneratedStep(
-                kind="action",
-                label="填写密码",
-                action="fill",
-                selector="[data-testid='password'], input[type='password']",
-                value="password_for_ci",
-            ),
-            GeneratedStep(
-                kind="action",
-                label="提交登录",
-                action="click",
-                selector="[data-testid='login-submit'], button[type='submit']",
-            ),
-            GeneratedStep(
-                kind="assertion",
-                label="确认用户进入已认证页面",
-                action="expect_visible",
-                selector="[data-testid='app-shell'], [data-testid='dashboard']",
-                expected="已认证页面外壳可见",
-            ),
-        ]
 
     def _submit_steps(self) -> list[GeneratedStep]:
         return [

@@ -25,17 +25,6 @@ PRODUCER_ROUTE_TOKENS = (
     "查询",
 )
 
-VARIABLE_DOMAIN_TERMS = {
-    "goods": ("goods", "good", "product", "商品", "产品"),
-    "product": ("goods", "good", "product", "商品", "产品"),
-    "campaign": ("campaign", "activity", "marketing", "活动", "营销"),
-    "activity": ("campaign", "activity", "marketing", "活动", "营销"),
-    "order": ("order", "订单"),
-    "user": ("user", "用户"),
-    "participant": ("participant", "participation", "参赛", "参与"),
-}
-
-
 def enforce_api_entrypoint_flow(
     generated: GeneratedCase,
     *,
@@ -379,8 +368,6 @@ def _producer_score(variable: str, text: str) -> int:
 def _variable_terms(variable: str) -> list[str]:
     words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|\d+", variable)
     terms = [word.lower() for word in words if word.lower() != "id"]
-    for word in list(terms):
-        terms.extend(VARIABLE_DOMAIN_TERMS.get(word, ()))
     return list(dict.fromkeys(term for term in terms if term))
 
 
@@ -536,14 +523,11 @@ def _looks_like_admin_or_merchant_route(text: str) -> bool:
 
 def _is_search_name_field(field: str) -> bool:
     normalized = field.replace("_", "").lower()
-    return normalized in {
-        "goodsname",
-        "campaignname",
-        "activityname",
-        "displaytitle",
-        "name",
-        "title",
-    }
+    return bool(
+        normalized in {"name", "title", "displaytitle", "keyword", "query", "searchtext"}
+        or normalized.endswith("name")
+        or normalized.endswith("title")
+    )
 
 
 def _schema_properties(request_body: dict[str, Any]) -> dict[str, Any]:

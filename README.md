@@ -12,7 +12,7 @@ Beautiful E2E 是一个面向多人协作的端到端自动化测试平台雏形
 - 执行模式开关：支持“前后端配合模式”和“纯后端接口模式”；前后端配合模式会在平台里直接运行浏览器步骤并展示截图，接口模式会动态发送请求并展示状态码、耗时、响应预览。
 - 多环境配置：项目可维护本地、开发、测试、预发、生产等环境的前端/接口基础地址；接口环境还绑定请求头键值，新建、编辑和项目面板都能分别选择前端环境与接口环境。
 - 路由证据约束：纯后端接口模式会扫描后端控制器 / 路由装饰器 / Swagger / OpenAPI 文档，向生成器提供真实方法、URL、处理函数、来源文件、参数、请求体和响应结构，避免凭某个业务域的惯例编造接口。
-- 接口参数链路：接口步骤支持在 `step.data.extract` 中从响应 JSON 提取变量，并在后续 `target_url`、`data.headers`、`data.body` 中使用 `{{变量}}`；生成器会倒推缺失的上游搜索、列表、详情、首页、预检或创建接口，运行器和 Playwright 导出都会真实解析变量。运行期若 JSONPath 或响应字段变动导致变量缺失，会先从前序响应做确定性别名推导，仍无法推导时可调用配置的 AI agent 做受限抽取，避免只在图上连线但 body 参数缺失。
+- 接口参数链路：接口步骤支持在 `step.data.extract` 中从响应 JSON 提取业务变量，并在后续 `target_url`、非认证 `data.headers`、`data.body` 中使用 `{{变量}}`；认证、登录态和网关请求头由项目请求头配置注入，不进入 DSL 变量链。生成器会倒推缺失的上游搜索、列表、详情、首页、预检或创建接口，运行器和 Playwright 导出都会真实解析变量。运行期若 JSONPath 或响应字段变动导致变量缺失，会先从前序响应做确定性别名推导，仍无法推导时可调用配置的 AI agent 做受限抽取，避免只在图上连线但 body 参数缺失。
 - 生成反馈闭环：纯后端接口模式保存用例前会按真实路由目录纠正常见的 method/path/query/body 契约偏差，并把 404、未知处理器、硬编码 ID、无生产者变量等问题整理到 `code_context.api_generation_feedback`。后续把运行失败反馈给生成 agent 时，应优先回到项目路径内的路由、Swagger/OpenAPI 和 DTO 契约，而不是继续沿用失败 DSL。
 - 项目分析索引：创建项目可选择立即分析，也可在工作台点击“更新分析”；重新分析会调用 `POST /api/projects/{project_id}/analyze/stream` 并通过 SSE 持续展示扫描进度和耗时，分析结果会写入 `repositories.index_summary`，后续生成优先复用已沉淀的接口路由和 DOM 目标。
 - MySQL 持久化：SQLAlchemy 模型覆盖项目、仓库、用户、用例组、用例、步骤、执行记录、评论和审计事件。
@@ -120,7 +120,7 @@ npm test
 根据/absolute/path/to/docs/change-request 生成客户端全流程测试用例
 ```
 
-后端会读取提示词中存在的本地 Markdown/文本路径，把执行单、需求、页面、用户故事、接口目录、验证等参考资料作为 `reference_documents` 注入 AI 供应商。模型应从文档内容归纳流程，而不是把路径字符串当成测试目标；在 `backend_api` 模式下，“客户端全流程”会被理解为客户端消费的真实接口链路，生成 `api_request` 节点并用当前项目扫描到的控制器路由或 Swagger/OpenAPI 路由补充 `route_source`。如果提示词明确写了“从 X 开始”“不要直接测 Y，要从 X 开始”等入口约束，生成载荷会把 X 提取为 `flow_entrypoint`，要求第一个可执行接口先落到该入口对应的真实列表、分页、搜索、详情、首页或预检路由，不能跳到后续页面或活动接口。每个接口步骤都必须包含非空 `target_url` 和 `data.method`；链路表、认证说明和测试数据说明只能写入 `step.data`，不会作为缺 URL 的伪接口步骤保存。如果 Swagger/OpenAPI 提供了 `parameters`、`requestBody` 或 `responses`，这些契约会进入 `backend_repository_summary.routes`，用于推导请求参数、请求体和响应提取点。对于需要从上游接口传递的 id、token、凭证、业务编号等参数，生成结果应先查找能生产这些参数的上游接口，在生产方步骤写 `data.extract`，在消费方 URL、headers 或 body 使用 `{{变量}}`，并通过 `data.depends_on` / `data.parameter_links` 记录推测依据；缺少可靠来源时写入 `data.unresolved_parameters` 和 `data.missing_upstream_steps`，便于后续根据运行错误继续反馈。生成结果会在步骤 `data` 或 `code_context.reference_documents` 中保留引用来源，便于后续反馈和修正。
+后端会读取提示词中存在的本地 Markdown/文本路径，把执行单、需求、页面、用户故事、接口目录、验证等参考资料作为 `reference_documents` 注入 AI 供应商。模型应从文档内容归纳流程，而不是把路径字符串当成测试目标；在 `backend_api` 模式下，“客户端全流程”会被理解为客户端消费的真实接口链路，生成 `api_request` 节点并用当前项目扫描到的控制器路由或 Swagger/OpenAPI 路由补充 `route_source`。如果提示词明确写了“从 X 开始”“不要直接测 Y，要从 X 开始”等入口约束，生成载荷会把 X 提取为 `flow_entrypoint`，要求第一个可执行接口先落到该入口对应的真实列表、分页、搜索、详情、首页或预检路由，不能跳到后续页面或目标接口。每个接口步骤都必须包含非空 `target_url` 和 `data.method`；链路表和测试数据说明只能写入 `step.data`，不会作为缺 URL 的伪接口步骤保存。认证、登录态、Cookie、session、token 和网关请求头统一由项目请求头在运行时注入，即使提示词或文档写了“登录后”，生成 DSL 也不会插入登录接口、token 提取或认证 header 占位符。如果 Swagger/OpenAPI 提供了 `parameters`、`requestBody` 或 `responses`，这些契约会进入 `backend_repository_summary.routes`，用于推导请求参数、请求体和响应提取点。对于需要从上游接口传递的业务实体 ID、状态型业务 ID、业务编号等参数，生成结果应先查找能生产这些参数的上游接口，在生产方步骤写 `data.extract`，在消费方 URL、非认证 headers 或 body 使用 `{{变量}}`，并通过 `data.depends_on` / `data.parameter_links` 记录推测依据；缺少可靠来源时写入 `data.unresolved_parameters` 和 `data.missing_upstream_steps`，便于后续根据运行错误继续反馈。生成结果会在步骤 `data` 或 `code_context.reference_documents` 中保留引用来源，便于后续反馈和修正。
 
 当运行结果出现 404、未知处理器、Method Not Allowed、0 个正确接口或变量无法推导时，后端会把这些现象归纳为通用事实反馈：失败 URL 是反例，下一轮必须重新查项目分析出的真实接口；`{{变量}}` 无生产者则必须先补上游查询、列表、详情、首页、预检或创建接口。反馈保存在 `code_context.api_generation_feedback`，可直接作为后续 prompt/agent 的输入。
 
@@ -130,7 +130,7 @@ npm test
 curl http://127.0.0.1:8000/api/ai/provider
 ```
 
-工作台项目面板里的“AI 配置”按钮会列出 `codex_exec`、GPT HTTP 桥接、OpenAI 兼容自定义供应商和本地规则生成器，并把选择写入数据库的 `ai_provider_configs`。配置里可以分别规划“项目分析”“Prompt 生成 DSL”“接口运行辅助测试”使用哪个 AI，同一个供应商可以承担多个用途；未保存规划时会沿用当前默认供应商。
+工作台项目面板里的“AI 配置”按钮会列出 `codex_exec`、GPT HTTP 桥接、OpenAI 兼容自定义供应商和本地规则生成器，并把选择写入数据库的 `ai_provider_configs`。配置里可以分别规划“项目分析”“Prompt 生成 DSL”“接口运行辅助测试”使用哪个 AI，同一个供应商可以承担多个用途；未保存规划时会沿用当前默认供应商。切换主供应商时，原本跟随旧主供应商的用途会同步迁移到新供应商，已手动分配给其他供应商的用途保持不变。
 
 ## 本机 MySQL
 

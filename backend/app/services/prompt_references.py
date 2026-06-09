@@ -217,7 +217,7 @@ class PromptReferenceReader:
             for term in interface_document_terms:
                 if term.lower() in search_text:
                     score += 28
-        if any(token in prompt_text for token in ["商品", "活动", "营销", "名称", "名字", "固定", "id"]):
+        if any(token in prompt_text for token in ["名称", "名字", "标题", "固定", "id"]):
             for term in fixture_document_terms:
                 if term.lower() in search_text:
                     score += 18

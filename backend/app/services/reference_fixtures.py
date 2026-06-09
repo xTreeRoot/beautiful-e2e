@@ -7,18 +7,9 @@ ID_FIELD_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*Id$")
 LONG_ID_PATTERN = re.compile(r"\d{6,}")
 
 NAME_FIELD_PRIORITIES = {
-    "goodsName": 120,
-    "goods_name": 120,
-    "商品名称": 120,
-    "商品名": 120,
-    "campaignName": 105,
-    "campaign_name": 105,
-    "活动名称": 105,
-    "activityName": 100,
-    "activity_name": 100,
-    "displayTitle": 95,
-    "display_title": 95,
-    "页面主标题": 95,
+    "displayTitle": 100,
+    "display_title": 100,
+    "页面主标题": 100,
     "主标题": 90,
     "标题": 80,
     "title": 80,
@@ -39,14 +30,14 @@ GENERIC_TABLE_HEADERS = {
 }
 
 NAME_FIELD_TOKENS = ("name", "title", "名称", "标题")
-SEARCH_FIELD_TOKENS = ("goodsname", "campaignname", "activityname", "displaytitle", "name", "title")
+SEARCH_FIELD_TOKENS = ("name", "title", "displaytitle", "keyword", "query", "search")
 
 
 def extract_reference_fixtures(reference_documents: list[dict[str, Any]]) -> dict[str, Any]:
     """从引用文档中抽取固定测试夹具和可复用业务名称。
 
     远程模型不能直接遍历本地文档目录，且容易把地名、范围词或短关键词当作实体名。
-    这里把执行单中的固定 ID、活动标题和示例名称整理成结构化事实，供生成、
+    这里把执行单中的固定 ID、页面标题和示例名称整理成结构化事实，供生成、
     项目分析上下文和后处理统一复用。
     """
 
@@ -133,7 +124,7 @@ def best_reference_search_term(
             continue
         score = int(item.get("priority") or 0)
         score += _field_affinity_score(field, str(item.get("field") or ""))
-        if current_text:
+        if current_text and not _looks_like_placeholder_search_value(current_text):
             if current_text == value:
                 continue
             if current_text in value:
@@ -141,11 +132,7 @@ def best_reference_search_term(
             elif len(current_text) >= 4:
                 continue
         if route:
-            route_text = _route_text(route)
-            if "goods" in route_text or "商品" in route_text:
-                score += _field_affinity_score("goodsName", str(item.get("field") or "")) // 2
-            if "campaign" in route_text or "活动" in route_text:
-                score += _field_affinity_score("campaignName", str(item.get("field") or "")) // 2
+            score += _field_overlap_score(_route_text(route), str(item.get("field") or "")) // 2
         ranked.append((score + min(len(value), 40), item))
 
     if not ranked:
@@ -308,12 +295,12 @@ def _name_field_priority(field: str) -> int:
     for known_field, priority in NAME_FIELD_PRIORITIES.items():
         if _normalized_name_field(known_field) == normalized:
             return priority
-    if any(token in normalized for token in ("商品", "goods")):
-        return 100
-    if any(token in normalized for token in ("活动", "campaign", "activity")):
-        return 90
     if any(token in normalized for token in ("标题", "title")):
         return 80
+    if normalized.endswith("name") or "名称" in normalized:
+        return 70
+    if any(token in normalized for token in ("keyword", "query", "search")):
+        return 60
     return 50
 
 
@@ -322,19 +309,37 @@ def _field_affinity_score(target_field: str, fixture_field: str) -> int:
     normalized_fixture = _normalized_name_field(fixture_field)
     if normalized_target == normalized_fixture:
         return 80
-    if normalized_target == "goodsname":
-        if any(token in normalized_fixture for token in ("goods", "商品")):
-            return 70
-        if any(token in normalized_fixture for token in ("campaign", "activity", "活动", "displaytitle", "标题")):
-            return 35
-    if normalized_target in {"campaignname", "activityname"}:
-        if any(token in normalized_fixture for token in ("campaign", "activity", "活动")):
-            return 70
-        if any(token in normalized_fixture for token in ("displaytitle", "标题")):
-            return 45
+    overlap = set(_field_tokens(normalized_target)) & set(_field_tokens(normalized_fixture))
+    if overlap:
+        return min(20 + len(overlap) * 20, 70)
+    if normalized_target.endswith("name") and normalized_fixture.endswith("name"):
+        return 35
+    if normalized_target.endswith("title") and normalized_fixture.endswith("title"):
+        return 35
     if any(token in normalized_fixture for token in SEARCH_FIELD_TOKENS):
         return 20
     return 0
+
+
+def _field_overlap_score(route_text: str, fixture_field: str) -> int:
+    route_tokens = set(_field_tokens(route_text))
+    fixture_tokens = set(_field_tokens(fixture_field))
+    if not route_tokens or not fixture_tokens:
+        return 0
+    return min(len(route_tokens & fixture_tokens) * 20, 80)
+
+
+def _field_tokens(value: str) -> list[str]:
+    lexical = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
+    tokens = [
+        token.lower()
+        for token in re.split(r"[^A-Za-z0-9\u4e00-\u9fff]+", lexical)
+        if len(token) >= 2
+    ]
+    chinese = "".join(re.findall(r"[\u4e00-\u9fff]+", value))
+    for term in re.findall(r"[\u4e00-\u9fff]{2,}", chinese):
+        tokens.extend(term[index : index + 2] for index in range(len(term) - 1))
+    return [token for token in tokens if token not in {"api", "http", "https"}]
 
 
 def _looks_like_business_name(value: str) -> bool:
@@ -347,6 +352,40 @@ def _looks_like_business_name(value: str) -> bool:
     if re.match(r"https?://|/", value):
         return False
     return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", value))
+
+
+def _looks_like_placeholder_search_value(value: str) -> bool:
+    """识别模型常写的占位搜索词，避免阻止引用文档中的真实实体名。"""
+
+    normalized = value.strip().lower()
+    if not normalized:
+        return False
+    if normalized in {
+        "keyword",
+        "keywords",
+        "query",
+        "search",
+        "name",
+        "title",
+        "test",
+        "demo",
+        "sample",
+    }:
+        return True
+    return any(
+        token in normalized
+        for token in [
+            "关键词",
+            "关键字",
+            "搜索词",
+            "查询词",
+            "目标",
+            "示例",
+            "测试",
+            "占位",
+            "placeholder",
+        ]
+    )
 
 
 def _route_text(route: dict[str, Any]) -> str:

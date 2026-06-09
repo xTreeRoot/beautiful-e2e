@@ -12,6 +12,7 @@ from app.services.generation_prompts import (
     API_FACT_FEEDBACK_PROMPT,
     BACKEND_API_ROUTE_GROUNDING_PROMPT,
 )
+from app.services.dsl_auth_context import build_dsl_auth_context, build_dsl_project_context
 from app.services.flow_entrypoint import flow_entrypoint_from_prompt
 from app.services.reference_fixtures import compact_reference_fixtures, extract_reference_fixtures
 
@@ -179,12 +180,15 @@ class CompletionCaseProvider(CaseGenerationProvider):
                 "agent": context.agent,
                 "skills": context.skills or [],
                 "canvas_dsl": context.canvas_dsl,
-                "project_context": context.project_context,
+                "project_context": build_dsl_project_context(
+                    context.project_context,
+                    context.auth_context,
+                ),
                 "reference_documents": reference_indexes(context.reference_documents or []),
                 "reference_fixtures": compact_reference_fixtures(
                     extract_reference_fixtures(context.reference_documents or [])
                 ),
-                "auth_context": _auth_context_from_generation_context(context),
+                "auth_context": build_dsl_auth_context(context.project_context, context.auth_context),
             },
         )
 
@@ -195,9 +199,11 @@ def build_case_generation_system_prompt() -> str:
         "你是端到端测试架构师。只返回有效 JSON，不要返回 Markdown。"
         "根据自然语言和仓库上下文生成适合 Playwright 落地的测试用例。"
         "如果提供 reference_documents，请把它们作为请求流程的主要来源材料。"
-        "先从 reference_documents 提取固定 ID、活动/商品名称和页面标题，"
+        "先从 reference_documents 提取固定 ID、实体名称、业务名称和页面标题，"
         "不要把地名、范围词或短关键词直接当成完整业务实体。"
         "如果提供 project_context，它是所有 LLM 共享的项目级事实来源，必须优先遵守。"
+        "认证、登录态、Cookie、session、token 和网关请求头一律由项目请求头在运行时注入；"
+        "不要把登录/登出、token 提取或认证 header 占位符生成进 DSL。"
         "不要把本地文件系统路径直接变成测试步骤；应读取引用文档内容，并推断用户可见旅程。"
         "在 backend_api 模式下，客户端、用户端或小程序流程指客户端消费的真实 HTTP 接口链路，"
         "必须输出 api_request，不要输出 goto/fill/click 等页面动作。"
@@ -228,6 +234,8 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
         extract_reference_fixtures(context.reference_documents or [])
     )
     flow_entrypoint = flow_entrypoint_from_prompt(context.prompt)
+    project_context = build_dsl_project_context(context.project_context, context.auth_context)
+    auth_context = build_dsl_auth_context(context.project_context, context.auth_context)
     return {
         "natural_language": context.prompt,
         "execution_mode": context.execution_mode,
@@ -250,13 +258,16 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
             "先从文档推导业务接口流程，再使用仓库摘要补充路由证据。",
             "每个从文档推导出的步骤都要在 data 中写入 reference_source 和 reference_excerpt。",
             "先使用 reference_fixtures.fixed_ids 和 reference_fixtures.entity_names；"
-            "文档已声明 goodsId/campaignId/displayTitle/campaign_name 时，不要退化成只用地名、范围词或短关键词。",
+            "文档已声明业务 ID、实体名称、业务名称或页面标题时，不要退化成只用地名、范围词或短关键词。",
             "如果 backend_repository_summary.routes 含有 Swagger/OpenAPI 或项目分析 Java DTO 的 parameters、request_body、responses，"
             "必须用它们推导请求参数、请求体和响应 extract。",
+            "如果 project_context.repositories[].analysis 含有 modules 或 relationships，"
+            "先按模块边界、scope_boundary 和变量流关系选入口与下游接口；相邻子域接口没有审核证据时不能互相替代。",
             "如果 project_context.repositories[].route_contract_examples 含有请求体字段，"
             "必须优先使用这些字段名，不要把项目 DTO 字段改写成其他分页框架的 current/size/keyword。",
-            "对需要从前置响应传递的参数，在生产方写 data.extract，消费方使用 {{变量}}。",
-            "无法推断来源的 body/path/header 参数写入 data.unresolved_parameters。",
+            "对需要从前置响应传递的业务参数，在生产方写 data.extract，消费方使用 {{变量}}。",
+            "无法推断来源的 body/path/query 或非认证 header 参数写入 data.unresolved_parameters。",
+            "认证、登录态、Cookie、session、token 和网关请求头由项目请求头维护，不写入步骤 DSL。",
             "如果下游接口需要业务实体 ID，必须先查找能生产该 ID 的上游搜索、列表、详情、首页、预检或创建接口。",
             "不要把长数字、1、fallback 或环境变量当作业务 ID 推导结果，除非文档明确声明它是固定测试夹具。",
             "如果 natural_language 要求真实找到、查出来、从分页/列表/搜索/查询开始再用 ID，"
@@ -265,28 +276,23 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
         "flow_entrypoint": flow_entrypoint,
         "flow_entrypoint_rules": [
             "flow_entrypoint.explicit=true 表示用户已经指定流程起点；第一个可执行 api_request 必须匹配 raw_text。",
-            "不要把 flow_entrypoint.raw_text 改写成后续页面或活动目标；先生成入口发现接口，再进入详情、确认或业务活动。",
+            "不要把 flow_entrypoint.raw_text 改写成后续目标页面；先生成入口发现接口，再进入详情、确认或业务操作。",
             "如果入口是列表、分页、搜索或查询，优先选择同领域 page/list/search/query 路由并 extract 下游需要的业务 ID。",
-            "分析性链路表、认证说明、测试数据说明和断言策略不能单独成为 api_request 步骤。",
+            "分析性链路表、测试数据说明和断言策略不能单独成为 api_request 步骤。",
             "找不到入口真实路由时，不要输出缺少 URL 的步骤；应把缺口写入 data.missing_upstream_steps。",
             "flow_entrypoint.requires_dynamic_discovery=true 时，下游业务 ID 必须来自入口或前置步骤 data.extract，"
             "不要把 reference_fixtures.fixed_ids 或接口文档示例 URL 中的长数字写进 target_url。",
         ],
-        "project_context": context.project_context or _default_project_context(),
-        "auth_context": _auth_context_from_generation_context(context),
+        "project_context": project_context,
+        "auth_context": auth_context,
         "auth_context_rules": [
-            "project_context 是所有 LLM 共享的项目级事实来源，后续新增 LLM 也必须复用它。",
-            "auth_context 只暴露环境请求头名称、分析结论和候选接口，不包含真实 token 或 cookie 值。",
-            "如果 auth_context.effective_mode 是 environment_headers，说明登录态由项目环境请求头注入；"
-            "不要为 likely_auth_header_keys 里的 header 生成 {{token}}、{{customer_token}} 等占位符，"
-            "也不要强行插入登录接口来生产这些 header。",
-            "如果 auth_context.effective_mode 是 configured_headers，configured_header_keys 会由运行环境自动注入；"
-            "不要在 step.data.headers 重复覆盖这些 header，除非用户明确要求当前步骤使用不同值。",
-            "如果 auth_context.effective_mode 是 login_flow，优先使用 login_route_candidates 建立登录步骤和 token extract。",
-            "如果 auth_context.effective_mode 是 external_or_environment_headers，优先提示用户配置环境认证请求头，不要臆造登录接口。",
-            "如果 auth_context.effective_mode 是 unknown，只有在真实路由和文档都证明存在可执行登录接口时，"
-            "才把登录建模成前置 api_request 并通过 data.extract 传递 token；否则写入 unresolved_parameters。",
-            "业务实体 ID、订单号、活动 ID 等业务变量仍必须走前置响应 extract，不能因为存在环境认证头就跳过生产者步骤。",
+            "project_context/auth_context 在 DSL 生成阶段只说明项目请求头会由运行环境注入。",
+            "auth_context 不包含真实 token、cookie 或密码，也不包含可供生成使用的登录接口候选。",
+            "无论仓库里是否存在登录接口，都不要生成登录/登出步骤、认证接口或 token/cookie/session extract。",
+            "不要在 step.data.headers 写 Authorization、Cookie、satoken、X-Token 等认证 header 占位符，"
+            "也不要为认证 header 建 depends_on 或 parameter_links。",
+            "如果接口运行需要登录态，由用户在项目请求头里补齐后再运行；DSL 不记录这个前置条件。",
+            "业务实体 ID、业务编号、状态型业务 ID 等业务变量仍必须走前置响应 extract，不能因为存在环境认证头就跳过生产者步骤。",
         ],
         "backend_api_route_grounding_prompt": BACKEND_API_ROUTE_GROUNDING_PROMPT,
         "api_flow_relationship_prompt": API_FLOW_RELATIONSHIP_PROMPT,
@@ -294,7 +300,7 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
         "api_fact_feedback_prompt": API_FACT_FEEDBACK_PROMPT,
         "api_flow_contract": {
             "extract": "step.data.extract 使用 {变量名: JSONPath} 从当前响应提取值。",
-            "placeholder": "后续步骤在 target_url、data.headers 或 data.body 中使用 {{变量名}}。",
+            "placeholder": "后续步骤在 target_url、非认证 data.headers 或 data.body 中使用 {{变量名}}。",
             "depends_on": "step.data.depends_on 或 parameter_links 记录变量来源和绑定位置。",
             "unresolved_parameters": "无法可靠推断来源时必须写出缺口，不要静默置空。",
             "missing_upstream_steps": "发现关键参数没有生产者时，写出应该补入的上游接口候选和原因。",
@@ -305,7 +311,7 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
             "对 target_url 中的 {xxxId} 或 {{xxx_id}}，先检查前置步骤是否 extract 了对应变量。",
             "没有生产者时，在 backend_repository_summary.routes 中查找同领域 page/list/search/options/detail/home/preview/create 路由。",
             "把找到的生产者步骤插入到消费者之前，并从响应中 extract 下游变量。",
-            "如果生产者本身也需要 ID，继续递归倒推，直到到达搜索/列表/登录/公开入口或显式测试夹具。",
+            "如果生产者本身也需要 ID，继续递归倒推，直到到达搜索/列表/公开入口或显式测试夹具。",
             "required=true 的依赖不能靠 parameter_links.fallback 通过；fallback 只写入诊断说明。",
             "如果用户要求从入口查询真实发现实体，固定夹具 ID 不能作为 required=true 的生产者；"
             "入口步骤必须 extract，下游必须用 {{变量名}}。",
@@ -361,33 +367,6 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
                 }
             ],
         },
-    }
-
-
-def _auth_context_from_generation_context(context: CaseGenerationContext) -> dict[str, Any]:
-    if isinstance(context.auth_context, dict):
-        return context.auth_context
-    project_auth = (context.project_context or {}).get("auth")
-    if isinstance(project_auth, dict):
-        return project_auth
-    return _default_project_context()["auth"]
-
-
-def _default_project_context() -> dict[str, Any]:
-    return {
-        "version": "project_llm_context.v1",
-        "auth": {
-            "effective_mode": "unknown",
-            "configured_header_keys": [],
-            "likely_auth_header_keys": [],
-            "login_route_candidates": [],
-            "redacted": True,
-            "reason": "未提供项目级上下文。",
-        },
-        "repositories": [],
-        "rules": [
-            "如果生成输入提供 reference_fixtures，所有 LLM 都必须优先使用其中的固定 ID 和实体名称。",
-        ],
     }
 
 

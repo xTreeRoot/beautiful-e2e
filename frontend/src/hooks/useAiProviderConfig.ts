@@ -77,11 +77,16 @@ export function useAiProviderConfig(showToast: (type: ToastKind, content: string
   }, []);
 
   const updateAiProviderForm = useCallback((patch: Partial<AiProviderFormState>) => {
-    setAiProviderForm((current) => ({
-      ...current,
-      ...patch,
-      usagePlan: patch.usagePlan ? { ...current.usagePlan, ...patch.usagePlan } : current.usagePlan
-    }));
+    setAiProviderForm((current) => {
+      const usagePlan = patch.usagePlan
+        ? { ...current.usagePlan, ...patch.usagePlan }
+        : usagePlanForProviderSwitch(current, patch.provider);
+      return {
+        ...current,
+        ...patch,
+        usagePlan
+      };
+    });
   }, []);
 
   const saveAiProviderConfig = useCallback(async () => {
@@ -208,6 +213,19 @@ function normalizeUsagePlan(status: AiProviderStatus): Record<string, string> {
   const nextPlan: Record<string, string> = { ...DEFAULT_FORM.usagePlan, ...(status.usage_plan ?? {}) };
   for (const option of status.usage_options ?? []) {
     nextPlan[option.key] = nextPlan[option.key] || fallback;
+  }
+  return nextPlan;
+}
+
+function usagePlanForProviderSwitch(
+  current: AiProviderFormState,
+  nextProvider: string | undefined
+): Record<string, string> {
+  if (!nextProvider || nextProvider === current.provider) return current.usagePlan;
+
+  const nextPlan: Record<string, string> = {};
+  for (const [usageKey, provider] of Object.entries(current.usagePlan)) {
+    nextPlan[usageKey] = provider === current.provider ? nextProvider : provider;
   }
   return nextPlan;
 }

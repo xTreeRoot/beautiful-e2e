@@ -159,7 +159,7 @@ export function NodeDebugPanel({
           <AntInput
             value={requestPath}
             onChange={(event) => handleRequestPathChange(event.target.value)}
-            placeholder="/api/orders/{orderId}"
+            placeholder="/api/entities/{entityId}"
           />
         </div>
         <DebugParamsEditor

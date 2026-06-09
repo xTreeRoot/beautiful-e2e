@@ -54,6 +54,32 @@ def test_repo_reader_extracts_spring_routes_with_source_evidence(tmp_path) -> No
     ]
 
 
+def test_repo_reader_extracts_multiline_operation_summary(tmp_path) -> None:
+    controller = tmp_path / "src/main/java/demo/CustomerSearchController.java"
+    controller.parent.mkdir(parents=True)
+    controller.write_text(
+        '''
+        package demo;
+
+        public class CustomerSearchController {
+            @Operation(summary = "资源搜索条件分页查询资源列表",
+                    description = """
+                            传参中如果 onlySpecial 为 true，则只返回特殊条件资源。
+                            """)
+            @PostMapping("/api/pb/resources/page")
+            @Log("资源搜索条件分页查询资源分页")
+            public void getResourcePage() {}
+        }
+        ''',
+        encoding="utf-8",
+    )
+
+    summary = RepoReader().summarize(str(tmp_path))
+
+    assert summary.routes[0]["summary"] == "资源搜索条件分页查询资源列表"
+    assert summary.routes[0]["log"] == "资源搜索条件分页查询资源分页"
+
+
 def test_repo_reader_extracts_java_request_body_dto_contract(tmp_path) -> None:
     controller = tmp_path / "src/main/java/demo/CustomerSearchController.java"
     controller.parent.mkdir(parents=True)
@@ -61,17 +87,17 @@ def test_repo_reader_extracts_java_request_body_dto_contract(tmp_path) -> None:
         """
         package demo;
 
-        import demo.dto.GoodsQry;
+        import demo.dto.ResourceQry;
 
         public class CustomerSearchController {
-            @Operation(summary = "商品搜索条件分页查询商品列表")
-            @PostMapping("/api/pb/goods/page")
-            public void getGoodsPage(@Valid @RequestBody GoodsQry goodsQry) {}
+            @Operation(summary = "资源搜索条件分页查询资源列表")
+            @PostMapping("/api/pb/resources/page")
+            public void getResourcePage(@Valid @RequestBody ResourceQry resourceQry) {}
         }
         """,
         encoding="utf-8",
     )
-    dto = tmp_path / "src/main/java/demo/dto/GoodsQry.java"
+    dto = tmp_path / "src/main/java/demo/dto/ResourceQry.java"
     dto.parent.mkdir(parents=True)
     dto.write_text(
         """
@@ -82,12 +108,12 @@ def test_repo_reader_extracts_java_request_body_dto_contract(tmp_path) -> None:
         import lombok.Data;
 
         @Data
-        public class GoodsQry extends PageRequest {
+        public class ResourceQry extends PageRequest {
             @Schema(description = "经纬度", example = "113.317323,23.038455", requiredMode =
                     Schema.RequiredMode.REQUIRED)
             private String location;
-            @Schema(description = "商品名称（搜索模式-模糊查询）")
-            private String goodsName;
+            @Schema(description = "资源名称（搜索模式-模糊查询）")
+            private String resourceName;
             @Schema(hidden = true)
             private String platform;
         }
@@ -113,9 +139,9 @@ def test_repo_reader_extracts_java_request_body_dto_contract(tmp_path) -> None:
     body = route["request_body"]
 
     assert route["method"] == "POST"
-    assert route["path"] == "/api/pb/goods/page"
-    assert body["java_type"] == "GoodsQry"
-    assert list(body["schema"]["properties"]) == ["page", "limit", "location", "goodsName"]
+    assert route["path"] == "/api/pb/resources/page"
+    assert body["java_type"] == "ResourceQry"
+    assert list(body["schema"]["properties"]) == ["page", "limit", "location", "resourceName"]
     assert "platform" not in body["schema"]["properties"]
     assert body["schema"]["required"] == ["location"]
     assert body["example"] == {
@@ -222,20 +248,20 @@ def test_repo_reader_extracts_swagger_routes_with_parameters_and_body(tmp_path) 
 
 def test_api_route_contract_enforcer_corrects_body_to_real_dto_fields() -> None:
     generated = GeneratedCase(
-        title="福州商品活动链路",
-        description="福州商品活动链路",
+        title="资源业务流程链路",
+        description="资源业务流程链路",
         priority="P1",
         steps=[
             GeneratedStep(
                 kind="api",
-                label="客户端商品分页查询：搜索福州活动商品",
+                label="客户端资源分页查询：搜索目标资源",
                 action="api_request",
-                target_url="/customer/api/pb/goods/page",
+                target_url="/customer/api/pb/resources/page",
                 expected="200",
                 data={
                     "method": "GET",
                     "expected_status": 200,
-                    "body": {"current": 1, "size": 20, "keyword": "福州"},
+                    "body": {"current": 1, "size": 20, "keyword": "目标关键词"},
                 },
             )
         ],
@@ -244,19 +270,19 @@ def test_api_route_contract_enforcer_corrects_body_to_real_dto_fields() -> None:
     )
     route = {
         "method": "POST",
-        "path": "/api/pb/goods/page",
-        "summary": "商品搜索条件分页查询商品列表",
+        "path": "/api/pb/resources/page",
+        "summary": "资源搜索条件分页查询资源列表",
         "source": "CustomerSearchController.java:60",
         "request_body": {
             "required": True,
-            "java_type": "GoodsQry",
+            "java_type": "ResourceQry",
             "schema": {
                 "type": "object",
                 "properties": {
                     "page": {"type": "integer"},
                     "limit": {"type": "integer"},
                     "location": {"type": "string"},
-                    "goodsName": {"type": "string"},
+                    "resourceName": {"type": "string"},
                 },
                 "required": ["location"],
             },
@@ -271,41 +297,41 @@ def test_api_route_contract_enforcer_corrects_body_to_real_dto_fields() -> None:
     assert data["body"] == {
         "page": 1,
         "limit": 20,
-        "goodsName": "福州",
+        "resourceName": "目标关键词",
         "location": "113.317323,23.038455",
     }
-    assert data["route_request_body"]["java_type"] == "GoodsQry"
+    assert data["route_request_body"]["java_type"] == "ResourceQry"
     assert data["route_contract_enforced"] is True
 
 
 def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_body() -> None:
     generated = GeneratedCase(
-        title="福州商品活动链路",
-        description="福州商品活动链路",
+        title="资源业务流程链路",
+        description="资源业务流程链路",
         priority="P1",
         steps=[
             GeneratedStep(
                 kind="api",
-                label="客户端商品分页查询：搜索福州活动商品",
+                label="客户端资源分页查询：搜索目标资源",
                 action="api_request",
-                target_url="/customer/api/pb/goods/page",
+                target_url="/customer/api/pb/resources/page",
                 expected="200",
                 data={
                     "method": "GET",
                     "expected_status": 200,
-                    "body": {"current": 1, "size": 20, "keyword": "福州"},
+                    "body": {"current": 1, "size": 20, "keyword": "目标关键词"},
                 },
             ),
             GeneratedStep(
                 kind="api",
-                label="活动首页",
+                label="流程首页",
                 action="api_request",
-                target_url="/customer/api/pb/campaign/goods/2057302278429007873/home",
+                target_url="/customer/api/pb/workflows/resources/2057302278429007873/home",
                 expected="200",
                 data={
                     "method": "GET",
                     "expected_status": 200,
-                    "route_path_template": "/api/pb/campaign/goods/{goodsId}/home",
+                    "route_path_template": "/api/pb/workflows/resources/{resourceId}/home",
                 },
             ),
         ],
@@ -315,19 +341,19 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
     routes = [
         {
             "method": "POST",
-            "path": "/api/pb/goods/page",
-            "summary": "商品搜索条件分页查询商品列表",
+            "path": "/api/pb/resources/page",
+            "summary": "资源搜索条件分页查询资源列表",
             "source": "CustomerSearchController.java:60",
             "request_body": {
                 "required": True,
-                "java_type": "GoodsQry",
+                "java_type": "ResourceQry",
                 "schema": {
                     "type": "object",
                     "properties": {
                         "page": {"type": "integer"},
                         "limit": {"type": "integer"},
                         "location": {"type": "string"},
-                        "goodsName": {"type": "string"},
+                        "resourceName": {"type": "string"},
                     },
                     "required": ["location"],
                 },
@@ -336,9 +362,9 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
         },
         {
             "method": "GET",
-            "path": "/api/pb/campaign/goods/{goodsId}/home",
-            "summary": "活动首页",
-            "source": "CustomerMarketingHomeController.java:39",
+            "path": "/api/pb/workflows/resources/{resourceId}/home",
+            "summary": "流程首页",
+            "source": "ResourceWorkflowHomeController.java:39",
         },
     ]
     references = [
@@ -348,12 +374,12 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
             "content": """
             | 字段 | 类型 | 必填 | 默认值 | 说明 |
             | --- | --- | --- | --- | --- |
-            | `campaign_name` | `string` | 是 | 无 | 运营内部名称，例如 `OIOI 福州 2026-06-19 打榜抽奖试点`。 |
-            | `display_title` | `string` | 是 | 无 | 用户端标题，例如 `OIOI 福州打榜抽奖活动`。 |
+            | `workflow_name` | `string` | 是 | 无 | 运营内部名称，例如 `Alpha Demo Workflow`。 |
+            | `display_title` | `string` | 是 | 无 | 用户端标题，例如 `Alpha Demo Workflow`。 |
 
             | 名称 | 值 | 说明 |
             | --- | --- | --- |
-            | `goodsId` | `2057302278429007873` | 福州商品 ID；首页按商品查活动 |
+            | `resourceId` | `2057302278429007873` | 固定资源 ID；首页按资源查业务流程 |
             """,
             "chars": 520,
             "truncated": False,
@@ -368,32 +394,32 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
     assert search_data["body"] == {
         "page": 1,
         "limit": 20,
-        "goodsName": "OIOI 福州 2026-06-19 打榜抽奖试点",
+        "resourceName": "Alpha Demo Workflow",
         "location": "113.317323,23.038455",
     }
-    assert search_data["reference_fixtures"]["fixed_ids"]["goodsId"] == "2057302278429007873"
+    assert search_data["reference_fixtures"]["fixed_ids"]["resourceId"] == "2057302278429007873"
     assert home_data["parameter_links"][0]["reason"].endswith("explicit_fixture。")
 
 
-def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discovery() -> None:
+def test_entrypoint_flow_uses_dynamic_resource_id_when_prompt_requires_real_discovery() -> None:
     generated = GeneratedCase(
-        title="福州商品活动链路",
-        description="福州商品活动链路",
+        title="资源业务流程链路",
+        description="资源业务流程链路",
         priority="P1",
         steps=[
             GeneratedStep(
                 kind="api",
-                label="活动首页",
+                label="流程首页",
                 action="api_request",
-                target_url="/customer/api/pb/campaign/goods/2057302278429007873/home",
+                target_url="/customer/api/pb/workflows/resources/2057302278429007873/home",
                 expected="200",
                 data={
                     "method": "GET",
                     "expected_status": 200,
-                    "route_path_template": "/api/pb/campaign/goods/{goodsId}/home",
+                    "route_path_template": "/api/pb/workflows/resources/{resourceId}/home",
                     "parameter_links": [
                         {
-                            "variable": "goodsId",
+                            "variable": "resourceId",
                             "value": "2057302278429007873",
                             "location": "target_url",
                             "reason": "引用文档声明的固定测试夹具 explicit_fixture。",
@@ -408,20 +434,20 @@ def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discove
     routes = [
         {
             "method": "POST",
-            "path": "/api/pb/goods/page",
-            "summary": "商品搜索条件分页查询商品列表",
-            "handler": "getGoodsPage",
+            "path": "/api/pb/resources/page",
+            "summary": "资源搜索条件分页查询资源列表",
+            "handler": "getResourcePage",
             "source": "CustomerSearchController.java:60",
             "request_body": {
                 "required": True,
-                "java_type": "GoodsQry",
+                "java_type": "ResourceQry",
                 "schema": {
                     "type": "object",
                     "properties": {
                         "page": {"type": "integer"},
                         "limit": {"type": "integer"},
                         "location": {"type": "string"},
-                        "goodsName": {"type": "string"},
+                        "resourceName": {"type": "string"},
                     },
                     "required": ["location"],
                 },
@@ -430,15 +456,15 @@ def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discove
             "responses": [
                 {
                     "status": 200,
-                    "fields": ["page", "limit", "total", "list", "goodsId", "goodsName"],
+                    "fields": ["page", "limit", "total", "list", "resourceId", "resourceName"],
                 }
             ],
         },
         {
             "method": "GET",
-            "path": "/api/pb/campaign/goods/{goodsId}/home",
-            "summary": "用户活动首页状态",
-            "source": "CustomerMarketingHomeController.java:39",
+            "path": "/api/pb/workflows/resources/{resourceId}/home",
+            "summary": "用户流程首页状态",
+            "source": "ResourceWorkflowHomeController.java:39",
         },
     ]
     references = [
@@ -448,8 +474,8 @@ def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discove
             "content": """
             | 名称 | 值 | 说明 |
             | --- | --- | --- |
-            | `goodsId` | `2057302278429007873` | 福州商品 ID；首页按商品查活动 |
-            | `display_title` | `string` | 用户端标题，例如 `OIOI 福州打榜抽奖活动`。 |
+            | `resourceId` | `2057302278429007873` | 固定资源 ID；首页按资源查业务流程 |
+            | `display_title` | `string` | 用户端标题，例如 `Alpha Demo Workflow`。 |
             """,
         }
     ]
@@ -457,8 +483,8 @@ def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discove
     enforced = enforce_api_entrypoint_flow(
         generated,
         prompt=(
-            "不要直接测营销活动页，要从客户端商品分页查询开始，真实找到福州活动商品，"
-            "再用商品 id 进入商品详情，并串起营销活动完整流程。"
+            "不要直接测目标业务页，要从客户端资源分页查询开始，真实找到目标资源，"
+            "再用资源 id 进入资源详情，并串起目标业务完整流程。"
         ),
         routes=routes,
         reference_documents=references,
@@ -466,10 +492,10 @@ def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discove
     producer_data = enforced.steps[0].data or {}
     consumer_data = enforced.steps[1].data or {}
 
-    assert enforced.steps[0].target_url == "/customer/api/pb/goods/page"
-    assert producer_data["body"]["goodsName"] == "OIOI 福州打榜抽奖活动"
-    assert producer_data["extract"]["goodsId"] == "$.data.list[0].goodsId"
-    assert enforced.steps[1].target_url == "/customer/api/pb/campaign/goods/{{goodsId}}/home"
+    assert enforced.steps[0].target_url == "/customer/api/pb/resources/page"
+    assert producer_data["body"]["resourceName"] == "Alpha Demo Workflow"
+    assert producer_data["extract"]["resourceId"] == "$.data.list[0].resourceId"
+    assert enforced.steps[1].target_url == "/customer/api/pb/workflows/resources/{{resourceId}}/home"
     assert consumer_data["parameter_links"][0]["source"] == "previous_response"
     assert "value" not in consumer_data["parameter_links"][0]
     assert enforced.code_context["api_entrypoint_flow_enforcement"]["items"][0]["type"] == (
@@ -479,15 +505,15 @@ def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discove
 
 def test_api_route_contract_enforcer_corrects_near_miss_route_and_query_body_contract() -> None:
     generated = GeneratedCase(
-        title="客户端商品查询链路",
-        description="客户端商品查询链路",
+        title="客户端资源查询链路",
+        description="客户端资源查询链路",
         priority="P1",
         steps=[
             GeneratedStep(
                 kind="api",
-                label="商品分页查询找到活动商品",
+                label="资源分页查询找到目标资源",
                 action="api_request",
-                target_url="/customer/api/pd/goods/page?page=1&limit=20&keyword=活动",
+                target_url="/customer/api/pd/resources/page?page=1&limit=20&keyword=目标查询词",
                 expected="200",
                 data={"method": "GET", "expected_status": 200},
             )
@@ -498,18 +524,18 @@ def test_api_route_contract_enforcer_corrects_near_miss_route_and_query_body_con
     routes = [
         {
             "method": "POST",
-            "path": "/api/pb/goods/page",
-            "summary": "商品搜索条件分页查询商品列表",
-            "source": "CustomerGoodsController.java:60",
+            "path": "/api/pb/resources/page",
+            "summary": "资源搜索条件分页查询资源列表",
+            "source": "CustomerResourceController.java:60",
             "request_body": {
                 "required": True,
-                "java_type": "GoodsQry",
+                "java_type": "ResourceQry",
                 "schema": {
                     "type": "object",
                     "properties": {
                         "page": {"type": "integer"},
                         "limit": {"type": "integer"},
-                        "goodsName": {"type": "string"},
+                        "resourceName": {"type": "string"},
                     },
                 },
             },
@@ -520,10 +546,10 @@ def test_api_route_contract_enforcer_corrects_near_miss_route_and_query_body_con
     step = enforced.steps[0]
     data = step.data or {}
 
-    assert step.target_url == "/customer/api/pb/goods/page"
+    assert step.target_url == "/customer/api/pb/resources/page"
     assert data["method"] == "POST"
-    assert data["body"] == {"page": 1, "limit": 20, "goodsName": "活动"}
-    assert data["route_source"] == "CustomerGoodsController.java:60"
+    assert data["body"] == {"page": 1, "limit": 20, "resourceName": "目标查询词"}
+    assert data["route_source"] == "CustomerResourceController.java:60"
     assert any(item["field"] == "target_url" for item in data["route_contract_corrections"])
 
 
@@ -919,13 +945,30 @@ def test_case_generation_payload_requires_upstream_discovery_rules() -> None:
     project_context = {
         "version": "project_llm_context.v1",
         "auth": {
-            "effective_mode": "environment_headers",
+            "effective_mode": "login_flow",
             "configured_header_keys": ["X-Customer-Token"],
             "likely_auth_header_keys": ["X-Customer-Token"],
+            "login_route_candidates": [
+                {"method": "POST", "path": "/customer/api/pb/user/login"}
+            ],
             "redacted": True,
         },
-        "repositories": [],
-        "rules": [],
+        "repositories": [
+            {
+                "kind": "backend",
+                "auth_profile": {
+                    "mode_hint": "login_flow",
+                    "login_route_candidates": [
+                        {"method": "POST", "path": "/customer/api/pb/user/login"}
+                    ],
+                    "header_candidates": ["X-Customer-Token"],
+                },
+            }
+        ],
+        "rules": [
+            "登录态可以来自环境请求头或可执行登录接口；业务实体 ID 仍必须来自前置响应或显式测试夹具。",
+            "如果生成输入提供 reference_fixtures，必须先使用固定 ID。",
+        ],
     }
     context = CaseGenerationContext(
         prompt="生成客户端真实接口链路",
@@ -940,8 +983,8 @@ def test_case_generation_payload_requires_upstream_discovery_rules() -> None:
                 "content": """
                 | 名称 | 值 | 说明 |
                 | --- | --- | --- |
-                | `goodsId` | `2057302278429007873` | 固定商品 ID |
-                | 页面主标题 | `OIOI 福州打榜抽奖活动` | 用户端展示 |
+                | `resourceId` | `2057302278429007873` | 固定资源 ID |
+                | 页面主标题 | `Alpha Demo Workflow` | 用户端展示 |
                 """,
             }
         ],
@@ -952,16 +995,40 @@ def test_case_generation_payload_requires_upstream_discovery_rules() -> None:
     assert any("搜索" in rule or "列表" in rule for rule in payload["upstream_discovery_rules"])
     assert "missing_upstream_steps" in payload["api_flow_contract"]
     assert payload["project_context"]["version"] == "project_llm_context.v1"
+    assert payload["project_context"]["auth"]["effective_mode"] == "project_request_headers"
+    assert "login_route_candidates" not in payload["project_context"]["auth"]
+    repository_auth = payload["project_context"]["repositories"][0]["auth_profile"]
+    assert repository_auth["mode_hint"] == "project_request_headers"
+    assert "login_route_candidates" not in repository_auth
+    assert payload["auth_context"]["effective_mode"] == "project_request_headers"
     assert payload["auth_context"]["likely_auth_header_keys"] == ["X-Customer-Token"]
-    assert payload["reference_fixtures"]["fixed_ids"]["goodsId"] == "2057302278429007873"
-    assert payload["reference_fixtures"]["entity_names"][0]["value"] == "OIOI 福州打榜抽奖活动"
-    assert any("environment_headers" in rule for rule in payload["auth_context_rules"])
+    assert "login_route_candidates" not in payload["auth_context"]
+    assert payload["reference_fixtures"]["fixed_ids"]["resourceId"] == "2057302278429007873"
+    assert payload["reference_fixtures"]["entity_names"][0]["value"] == "Alpha Demo Workflow"
+    assert any("项目请求头" in rule for rule in payload["auth_context_rules"])
+    assert not any("login_flow" in rule for rule in payload["auth_context_rules"])
     assert any("reference_fixtures" in rule for rule in payload["reference_document_rules"])
+
+
+def test_rule_based_generation_does_not_inject_login_steps_from_prompt() -> None:
+    generated = CaseGenerator().generate(
+        "登录后进入记录列表并校验状态",
+        frontend=RepoSummary(path=None, exists=False, files=[], signals=[]),
+        backend=RepoSummary(path=None, exists=False, files=[], signals=[]),
+        execution_mode="fullstack",
+    )
+
+    labels = [step.label for step in generated.steps]
+
+    assert "进入登录页" not in labels
+    assert "提交登录" not in labels
+    assert all(step.target_url != "/login" for step in generated.steps)
+    assert generated.code_context["auth_context"]["effective_mode"] == "project_request_headers"
 
 
 def test_case_generation_payload_extracts_explicit_flow_entrypoint() -> None:
     context = CaseGenerationContext(
-        prompt="不要直接测营销活动页，要从客户端商品分页查询开始，再进入详情和活动完整流程",
+        prompt="不要直接测目标业务页，要从客户端资源分页查询开始，再进入详情和目标业务完整流程",
         frontend=RepoSummary(path=None, exists=False, files=[], signals=[]),
         backend=RepoSummary(path="/repo", exists=True, files=[], signals=[], routes=[]),
         execution_mode="backend_api",
@@ -970,7 +1037,7 @@ def test_case_generation_payload_extracts_explicit_flow_entrypoint() -> None:
     payload = build_case_generation_payload(context)
 
     assert payload["flow_entrypoint"]["explicit"] is True
-    assert payload["flow_entrypoint"]["raw_text"] == "商品分页查询"
+    assert payload["flow_entrypoint"]["raw_text"] == "资源分页查询"
     assert payload["flow_entrypoint"]["must_be_first_executable_step"] is True
     assert payload["flow_entrypoint"]["requires_dynamic_discovery"] is True
     assert any("第一个可执行 api_request" in rule for rule in payload["flow_entrypoint_rules"])
@@ -1026,18 +1093,18 @@ def test_project_llm_context_exposes_route_contract_examples(mysql_engine: Engin
         routes=[
             {
                 "method": "POST",
-                "path": "/api/pb/goods/page",
-                "summary": "商品搜索条件分页查询商品列表",
+                "path": "/api/pb/resources/page",
+                "summary": "资源搜索条件分页查询资源列表",
                 "source": "CustomerSearchController.java:60",
                 "request_body": {
                     "required": True,
-                    "java_type": "GoodsQry",
+                    "java_type": "ResourceQry",
                     "schema": {
                         "type": "object",
                         "properties": {
                             "page": {"type": "integer"},
                             "limit": {"type": "integer"},
-                            "goodsName": {"type": "string"},
+                            "resourceName": {"type": "string"},
                         },
                         "required": [],
                     },
@@ -1062,9 +1129,9 @@ def test_project_llm_context_exposes_route_contract_examples(mysql_engine: Engin
     assert backend_context["route_contract_examples"][0]["request_body"]["fields"] == [
         "page",
         "limit",
-        "goodsName",
+        "resourceName",
     ]
-    assert any("current/size/keyword" in rule for rule in context["rules"])
+    assert any("真实 DTO 字段" in rule for rule in context["rules"])
 
 
 def test_backend_toggle_keeps_project_selected_execution_mode() -> None:
@@ -1120,6 +1187,95 @@ def test_project_analyzer_persists_repository_index_summary(tmp_path, mysql_engi
 
     assert repositories["backend"].index_summary["routes"][0]["path"] == "/api/public/resources/{id}/detail"
     assert repositories["frontend"].index_summary["dom_targets"][0]["value"] == "submit-form"
+
+
+def test_project_analyzer_groups_routes_and_relationships_with_code_evidence(
+    tmp_path,
+    mysql_engine: Engine,
+) -> None:
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "pom.xml").write_text("<project />", encoding="utf-8")
+    (backend / "CustomerSearchController.java").write_text(
+        '''
+        public class CustomerSearchController {
+            @Operation(summary = "资源搜索条件分页查询资源列表",
+                    description = """
+                            传参中如果 onlySpecial 为 true，则只返回特殊条件资源。
+                            """)
+            @PostMapping("/api/pb/resources/page")
+            @Log("资源搜索条件分页查询资源分页")
+            public void getResourcePage() {}
+
+            @Operation(summary = "特殊子域资源分页")
+            @PostMapping("/api/pb/resources/special/page")
+            @Log("资源搜索条件分页查询资源列表")
+            public void getResourcePageInSpecialScope() {}
+
+            @Operation(summary = "资源详情")
+            @GetMapping("/api/pb/resources/detail/{id}")
+            public void detail() {}
+
+            @Operation(summary = "用户流程首页状态")
+            @GetMapping("/api/pb/workflows/resources/{resourceId}/home")
+            public void home() {}
+        }
+        ''',
+        encoding="utf-8",
+    )
+
+    with Session(mysql_engine) as db:
+        project = Project(name="analysis-route-module-test")
+        db.add(project)
+        db.flush()
+        ProjectAnalyzer().analyze(
+            project.id,
+            {
+                "workspace_path": str(tmp_path),
+                "frontend_repo_path": "",
+                "backend_repo_path": "",
+            },
+            db,
+        )
+        db.commit()
+
+        repository = db.scalar(
+            select(Repository).where(
+                Repository.project_id == project.id,
+                Repository.kind == "backend",
+            )
+        )
+        project_context = build_project_llm_context(project.id, {}, db)
+
+    assert repository is not None
+    analysis = repository.index_summary["analysis"]
+    modules = {module["id"]: module for module in analysis["modules"]}
+    resource_routes = {
+        route["path"]: route
+        for route in modules["module_resources"]["routes"]
+    }
+    special_scope_routes = {
+        route["path"]: route
+        for route in modules["module_resources_special"]["routes"]
+    }
+    resource_relationship = next(
+        relationship
+        for relationship in analysis["relationships"]
+        if relationship["variable"] == "resourceId"
+        and relationship["from_route"]["path"] == "/api/pb/resources/page"
+        and relationship["to_route"]["path"]
+        == "/api/pb/workflows/resources/{resourceId}/home"
+    )
+
+    assert resource_routes["/api/pb/resources/page"]["role"] == "discovery"
+    assert resource_routes["/api/pb/resources/page"]["produces"] == ["resourceId"]
+    assert "/api/pb/resources/special/page" in special_scope_routes
+    assert "只有提示词、文档或人工审核命中这些子域词" in modules["module_resources_special"]["scope_boundary"]
+    assert resource_relationship["from_module"] == "module_resources"
+    assert resource_relationship["to_module"] == "module_workflows_resources"
+    assert resource_relationship["confirmed"] is False
+    assert "source=" in resource_relationship["evidence"][0]
+    assert project_context["repositories"][0]["analysis"]["modules"]
 
 
 def test_project_analyzer_persists_auth_profile_for_shared_llm_context(

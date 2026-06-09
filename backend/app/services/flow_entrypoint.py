@@ -4,10 +4,6 @@ import re
 from typing import Any
 
 ENTRYPOINT_INTENT_EXPANSIONS = {
-    "商品": ("goods", "good", "product", "item"),
-    "产品": ("product", "goods", "item"),
-    "活动": ("campaign", "activity"),
-    "营销": ("campaign", "activity", "marketing"),
     "分页": ("page", "list"),
     "列表": ("list", "page"),
     "搜索": ("search", "query", "list", "page"),
@@ -65,7 +61,7 @@ def flow_entrypoint_from_prompt(prompt: str) -> dict[str, Any]:
     raw_text = extract_entrypoint_text(prompt)
     rules = [
         "第一个可执行步骤必须匹配 raw_text 对应的真实接口。",
-        "入口发现接口要先于详情、活动、提交或结果查询接口。",
+        "入口发现接口要先于详情、目标业务动作、提交或结果查询接口。",
         "如果 raw_text 是列表/分页/搜索/查询意图，首步应生产下游业务实体 ID。",
     ]
     return {
@@ -153,8 +149,8 @@ def entrypoint_terms(text: str) -> list[str]:
     chinese_terms = re.findall(r"[\u4e00-\u9fff]{2,}", normalized)
     for term in chinese_terms:
         terms.append(term)
-        if len(term) > 2:
-            terms.extend(term[index : index + 2] for index in range(len(term) - 1))
+        for width in range(2, min(4, len(term)) + 1):
+            terms.extend(term[index : index + width] for index in range(len(term) - width + 1))
 
     lexical = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", normalized)
     terms.extend(

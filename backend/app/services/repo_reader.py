@@ -51,6 +51,7 @@ class RepoSummary:
     routes: list[dict[str, Any]] = field(default_factory=list)
     dom_targets: list[dict[str, Any]] = field(default_factory=list)
     auth_profile: dict[str, Any] | None = None
+    analysis: dict[str, Any] | None = None
 
     def as_dict(self) -> dict:
         data = {
@@ -63,6 +64,8 @@ class RepoSummary:
         }
         if self.auth_profile:
             data["auth_profile"] = self.auth_profile
+        if self.analysis:
+            data["analysis"] = self.analysis
         return data
 
     @classmethod
@@ -77,6 +80,7 @@ class RepoSummary:
             routes=[item for item in value.get("routes", []) if isinstance(item, dict)],
             dom_targets=[item for item in value.get("dom_targets", []) if isinstance(item, dict)],
             auth_profile=value.get("auth_profile") if isinstance(value.get("auth_profile"), dict) else None,
+            analysis=value.get("analysis") if isinstance(value.get("analysis"), dict) else None,
         )
 
 
@@ -346,6 +350,15 @@ class RepoReader:
         attribute_name: str,
     ) -> str | None:
         pattern = re.compile(rf"{attribute_name}\s*=\s*\"([^\"]+)\"")
+        window = "\n".join(lines[max(0, index - 12) : index + 1])
+        block_pattern = re.compile(
+            rf"{re.escape(annotation_name)}\s*\((?P<body>.*?)\)\s*@\w+Mapping",
+            re.S,
+        )
+        for match in reversed(list(block_pattern.finditer(window))):
+            value = pattern.search(match.group("body"))
+            if value:
+                return value.group(1)
         for cursor in self._nearby_annotation_indexes(lines, index):
             line = lines[cursor].strip()
             if annotation_name not in line:

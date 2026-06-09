@@ -194,7 +194,7 @@ def test_codex_exec_output_schema_avoids_unsupported_composition_keywords() -> N
 def test_codex_exec_payload_compaction_keeps_route_contract_under_limit() -> None:
     large_schema = {
         "type": "object",
-        "required": ["activityId"],
+        "required": ["recordId"],
         "properties": {
             f"field_{index}": {"type": "string", "description": "字段说明" * 80}
             for index in range(90)
@@ -202,11 +202,11 @@ def test_codex_exec_payload_compaction_keeps_route_contract_under_limit() -> Non
     }
     route = {
         "method": "POST",
-        "path": "/api/pd/activity/create",
-        "summary": "创建活动",
+        "path": "/api/pd/records/create",
+        "summary": "创建记录",
         "handler": "create",
-        "source": "ActivityController.java:42",
-        "request_body": {"schema": large_schema, "java_type": "ActivityCreateRequest"},
+        "source": "RecordController.java:42",
+        "request_body": {"schema": large_schema, "java_type": "RecordCreateRequest"},
         "log": "扫描日志" * 2_000,
     }
     payload = {
@@ -239,7 +239,7 @@ def test_codex_exec_payload_compaction_keeps_route_contract_under_limit() -> Non
 
     assert len(compacted_text) <= 60_000
     assert compacted["context_compaction"]["provider"] == "codex_exec"
-    assert compacted_route["path"] == "/api/pd/activity/create"
+    assert compacted_route["path"] == "/api/pd/records/create"
     assert compacted_route["request_body"]["fields"][:2] == ["field_0", "field_1"]
     assert "properties" not in compacted_route["request_body"]
 
@@ -414,6 +414,44 @@ def test_ai_provider_update_persists_usage_plan(mysql_engine, monkeypatch) -> No
         runtime_settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_API_RUNTIME)
         dsl_settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_DSL_GENERATION)
         assert runtime_settings.ai_provider == "openai_compatible"
+        assert dsl_settings.ai_provider == "codex_exec"
+
+    get_settings.cache_clear()
+
+
+def test_ai_provider_switch_rebinds_stale_usage_plan(mysql_engine, monkeypatch) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "rule_based")
+    monkeypatch.delenv("AI_PROVIDER_ENTRYPOINT", raising=False)
+    monkeypatch.setattr("app.api.system.resolve_codex_executable", lambda command: "/mock/codex")
+    get_settings.cache_clear()
+
+    old_plan = {
+        AI_USAGE_PROJECT_ANALYSIS: "codex_bridge",
+        AI_USAGE_DSL_GENERATION: "codex_bridge",
+        AI_USAGE_API_RUNTIME: "codex_bridge",
+    }
+    with Session(mysql_engine) as db:
+        update_ai_provider(
+            AiProviderUpdate(provider="codex_bridge", usage_plan=old_plan),
+            db,
+        )
+
+        status = update_ai_provider(
+            AiProviderUpdate(
+                provider="codex_exec",
+                codex_exec_command="codex",
+                usage_plan=old_plan,
+            ),
+            db,
+        )
+
+        assert status["active_provider"] == "codex_exec"
+        assert status["usage_plan"] == {
+            AI_USAGE_PROJECT_ANALYSIS: "codex_exec",
+            AI_USAGE_DSL_GENERATION: "codex_exec",
+            AI_USAGE_API_RUNTIME: "codex_exec",
+        }
+        dsl_settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_DSL_GENERATION)
         assert dsl_settings.ai_provider == "codex_exec"
 
     get_settings.cache_clear()

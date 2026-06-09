@@ -194,6 +194,8 @@ def settings_with_ai_provider(settings: Settings, resolved: ResolvedAiProvider) 
 
 
 def save_ai_provider_update(settings: Settings, db: Session, payload: AiProviderUpdate) -> None:
+    previous_provider_key = active_ai_provider_key(settings, db)
+    previous_usage_plan = ai_usage_plan(settings, db)
     provider_key = _payload_provider_key(payload, settings, db)
     _validate_provider_key(provider_key)
     row = _get_or_create_provider_config(db, provider_key)
@@ -206,8 +208,14 @@ def save_ai_provider_update(settings: Settings, db: Session, payload: AiProvider
     row.config = _merged_provider_config(provider_key, row.config, payload)
     _mark_active_provider(db, row)
 
-    if payload.usage_plan is not None:
-        _save_usage_plan(settings, db, payload.usage_plan, fallback_provider_key=provider_key)
+    usage_plan = _usage_plan_for_provider_switch(
+        payload.usage_plan,
+        previous_usage_plan,
+        previous_provider_key=previous_provider_key,
+        provider_key=provider_key,
+    )
+    if usage_plan is not None:
+        _save_usage_plan(settings, db, usage_plan, fallback_provider_key=provider_key)
 
 
 def _save_usage_plan(
@@ -237,6 +245,50 @@ def _save_usage_plan(
     for usage_key, provider_key in normalized_plan.items():
         row = rows[provider_key]
         row.usage_keys = [*(_normalized_usage_keys(row.usage_keys)), usage_key]
+
+
+def _usage_plan_for_provider_switch(
+    raw_plan: Mapping[str, str] | None,
+    current_plan: Mapping[str, str],
+    *,
+    previous_provider_key: str,
+    provider_key: str,
+) -> dict[str, str] | None:
+    """主供应商切换时，让沿用旧主供应商的用途自然跟随新主供应商。
+
+    前端旧表单会把保存前的用途规划原样带回；如果不识别这个场景，用户点击
+    `codex_exec` 后，Prompt 生成 DSL 仍可能继续使用旧供应商。
+    """
+
+    if raw_plan is None and previous_provider_key == provider_key:
+        return None
+
+    next_plan = {
+        option.key: _clean_optional((raw_plan or {}).get(option.key))
+        or current_plan.get(option.key)
+        or provider_key
+        for option in AI_USAGE_OPTIONS
+    }
+    if previous_provider_key == provider_key:
+        return next_plan
+    if raw_plan is not None and not _raw_usage_plan_matches_current(raw_plan, current_plan):
+        return next_plan
+
+    return {
+        usage_key: provider_key if assigned_provider == previous_provider_key else assigned_provider
+        for usage_key, assigned_provider in next_plan.items()
+    }
+
+
+def _raw_usage_plan_matches_current(
+    raw_plan: Mapping[str, str],
+    current_plan: Mapping[str, str],
+) -> bool:
+    for option in AI_USAGE_OPTIONS:
+        provider_key = _clean_optional(raw_plan.get(option.key))
+        if provider_key is not None and provider_key != current_plan.get(option.key):
+            return False
+    return True
 
 
 def _payload_provider_key(payload: AiProviderUpdate, settings: Settings, db: Session) -> str:

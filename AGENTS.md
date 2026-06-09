@@ -147,6 +147,74 @@ function toCanvasNodes(caseItem: TestCase): CanvasNode[] {
 - 新增函数如果同时需要读取 prompt、解析文档、匹配路由、写数据库或更新 UI 状态中的两类以上职责，应拆到 service、hook、lib 或 schema 层。
 - 评审时优先检查“新增逻辑是否放在正确模块”，而不是只看代码能否运行；发现门面文件新增复杂私有方法，应要求迁移到领域模块。
 
+## 外部项目污染防回灌规则
+
+为什么要这么做：
+
+- Beautiful E2E 是通用测试平台，不是任何被测业务仓库的附属工具。用户提示词、引用文档、运行反馈和本地数据库里出现的外部项目名、真实接口路径、品牌词、城市词、具体业务对象、具体玩法、真实请求头或长 ID，都只能作为当次生成输入和运行证据，不能沉淀进源码、测试、文档、默认数据、生成样例或智能体规范。
+- 一旦把某个外部项目的词写进规则、测试 fixture、默认 prompt 或本地生成 spec，后续 AI 会把它当成平台内置知识，导致“项目分析”阶段先入为主，进而生成错误 DSL。
+- 项目分析和 DSL 生成只能根据当前被测仓库的代码证据归纳模块、入口、前后置关系和参数链，不能依赖固定业务词或历史样例词。
+
+禁止事项：
+
+- 禁止在 `backend/app`、`frontend/src`、`runner/tests`、`docs`、`README.md`、`AGENTS.md` 中写入外部项目专有名、个人本机业务仓库路径、真实网关地址、真实请求头值、真实 token、固定业务长 ID 或具体业务流程名。
+- 禁止把用户 prompt 原文、引用文档原文、运行失败 DSL、数据库中旧用例标题或旧步骤标签直接复制成测试 fixture、默认 prompt、文档示例或生成样例。
+- 禁止为了修某个外部项目而新增固定映射，例如把某类入口词硬映射到某个具体路由、DTO 字段或下游接口。必须改成基于路由、DTO、OpenAPI、响应字段和源码位置的通用推断。
+- 禁止保留 `runner/tests/generated/*.spec.ts` 中的本地导出样例。该目录只保留 `.gitkeep`；需要验证导出时临时生成，验证后删除或保持 ignored。
+- 禁止让本地开发数据库里的旧项目、旧仓库索引、旧用例、旧 prompt 或真实请求头影响 smoke、截图、文档和 AI 生成结果。
+
+必须执行的清洗动作：
+
+- 处理任何来自外部被测仓库的 prompt、执行单、接口文档或运行反馈后，先整理一份“动态污染词表”。词表应覆盖项目名、仓库名、品牌名、城市名、业务对象名、玩法名、接口前缀、DTO 字段、页面标题、真实域名/IP、长 ID 样例和请求头 key。词表只用于本次扫描，不写进仓库。
+- 扫描 Git 会发布的全部文件、未跟踪文件、忽略但属于本项目的本地产物和文件路径。排除第三方依赖、虚拟环境、缓存、构建产物里的供应商代码，但必须检查 `runner/tests/generated/`、本地数据库 bootstrap 响应和前端运行态截图/错误上下文。
+- 发现命中时按来源处理：源码和测试改成中性 fixture；文档改成泛化说明；生成 spec 删除；本地开发数据库删除旧项目或重置成默认空白项目；真实请求头和 token 不复述，只清理位置和类型。
+- 清理后再次运行内容扫描和路径扫描。扫描结果必须为空，或只剩第三方依赖/构建产物中的供应商内部符号，并在最终说明里解释为什么不是业务残留。
+- 如果需要保留测试场景，统一使用中性命名，例如“实体、条目、记录、流程、任务、业务编号、业务凭证、目标查询词”。测试断言必须验证通用能力，例如“入口发现、DTO 字段修正、参数 extract、关系 evidence”，不能验证具体业务名。
+- 本地前端 smoke 必须使用干净 bootstrap：当前项目应是 Beautiful E2E 默认项目，仓库路径为空，项目请求头为空，页面上不应出现外部项目 prompt 或旧用例节点。
+
+推荐排查命令：
+
+```bash
+# 1. 列出 Git 会关注的文件，确认没有生成 spec 或本地产物进入待提交范围。
+git status --short --ignored
+git ls-files --cached --others --exclude-standard
+
+# 2. 用本次动态污染词表扫描源码、测试、文档、runner 和路径。
+# <动态污染词正则> 由当次外部项目输入生成，不要写死进仓库。
+rg -n -uuu "<动态污染词正则>" . -S \
+  --glob '!**/.git/**' \
+  --glob '!**/node_modules/**' \
+  --glob '!**/.venv/**' \
+  --glob '!**/__pycache__/**' \
+  --glob '!**/.pytest_cache/**' \
+  --glob '!**/.ruff_cache/**' \
+  --glob '!frontend/dist/**' \
+  --glob '!backend/beautiful_e2e_backend.egg-info/**'
+
+find . \( \
+  -path './.git' -o \
+  -path './frontend/node_modules' -o \
+  -path './runner/node_modules' -o \
+  -path './backend/.venv' -o \
+  -path './.venv' -o \
+  -path './frontend/dist' -o \
+  -path './backend/.pytest_cache' -o \
+  -path './backend/.ruff_cache' -o \
+  -path './backend/beautiful_e2e_backend.egg-info' -o \
+  -path '*/__pycache__' \
+\) -prune -o -print | rg -n "<动态污染词正则>" -S
+
+# 3. 检查运行态 bootstrap 是否仍携带外部项目数据。输出只看命中与否，不复述敏感值。
+curl -s -X POST http://127.0.0.1:8000/api/bootstrap | rg -n "<动态污染词正则>" -S || true
+curl -s http://127.0.0.1:8000/api/projects | rg -n "<动态污染词正则>" -S || true
+```
+
+复查要求：
+
+- 每次涉及 AI 生成、项目分析、路由归纳、DSL 后处理、测试 fixture、文档示例、runner 生成物或本地开发库时，都必须执行上述污染扫描。
+- 如果扫描命中来自真实敏感信息，回复和日志只写“命中位置和类型”，不复述具体值。
+- 清理后至少运行受影响范围的验证；触碰后端生成链路运行 `cd backend && uv run pytest` 和 `cd backend && uv run ruff check .`，触碰前端运行 `cd frontend && npm run build`，触碰 runner 或 smoke 运行 `cd runner && npm test`。
+
 ## 推送前安全扫描
 
 任何推送到公开仓库前，必须先确认 Git 会发布的内容是干净的。扫描时只报告命中位置和类型，不在终端、回复或日志中复述完整密钥值。

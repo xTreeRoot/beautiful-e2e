@@ -86,12 +86,15 @@ def build_project_llm_context(
             *[_repository_context(repo) for repo in repositories if repo.kind not in summary_profiles],
         ],
         "rules": [
-            "所有 LLM 必须优先遵守 project_llm_context.auth.effective_mode。",
+            "生成 DSL 的 LLM 必须把认证、登录态、Cookie、session、token 和网关请求头视为项目请求头能力。",
             "环境请求头只暴露 key，不暴露真实值；不要把真实 token、cookie 或密码写入 DSL。",
-            "登录态可以来自环境请求头或可执行登录接口；业务实体 ID 仍必须来自前置响应或显式测试夹具。",
-            "如果生成输入提供 reference_fixtures，必须先使用其中固定 ID、活动名、商品名或页面标题，不要从提示词短词猜实体。",
+            "不要为登录态生成登录/登出步骤、认证接口、token extract 或认证 header 占位符。",
+            "业务实体 ID 仍必须来自前置响应或显式测试夹具。",
+            "如果生成输入提供 reference_fixtures，必须先使用其中固定 ID、实体名称、业务名称或页面标题，不要从提示词短词猜实体。",
             "接口参数必须以 repository.route_contract_examples 或 backend_repository_summary.routes 中的 parameters/request_body 为准。",
-            "生成分页或搜索 body 时禁止把 page/limit/goodsName 猜成 current/size/keyword，除非真实 DTO 明确存在这些字段。",
+            "接口入口、子域边界和前后置关系优先参考 repository.analysis.modules 与 relationships；"
+            "未审核关系必须保留 evidence，不要把相邻子域接口当作同一入口。",
+            "生成分页或搜索 body 时必须使用真实 DTO 字段，禁止按其他项目或框架习惯改写字段名。",
             "运行期辅助 LLM 只能从 previous_responses 抽取变量，不能用项目画像编造缺失值。",
             "后续收到 api_generation_feedback 时，必须把 404、未知处理器和变量未推导视为反例证据，重新回到项目路径内的真实路由和参数契约。",
         ],
@@ -252,7 +255,7 @@ def _summary_context(kind: str, summary: RepoSummary) -> dict[str, Any]:
         "kind": kind,
         "path": summary.path,
         "exists": summary.exists,
-        "analysis": {},
+        "analysis": summary.analysis or {},
         "route_count": len(summary.routes),
         "dom_target_count": len(summary.dom_targets),
         "route_contract_profile": _route_contract_profile(summary.routes),
@@ -421,15 +424,10 @@ def _max_profile_confidence(profiles: list[dict[str, Any]], mode_hint: str) -> f
 
 
 def _generation_guidance(effective_mode: str) -> str:
-    if effective_mode == "environment_headers":
-        return "生成 DSL 时不要为环境认证 header 生成 token 占位符，也不要强行插入登录接口。"
-    if effective_mode == "login_flow":
-        return "可以优先使用候选登录接口建立 token extract，再让后续接口消费该变量。"
-    if effective_mode == "external_or_environment_headers":
-        return "登录可能依赖小程序、三方或验证码；优先提示用户配置环境请求头，不要臆造登录链路。"
-    if effective_mode == "environment_headers_required":
-        return "接口契约需要认证 header，但当前环境未提供值；生成 DSL 时应标记认证缺口。"
-    return "登录方式不明确；只有证据充分时才生成登录步骤，否则写入 unresolved_parameters。"
+    return (
+        "认证、登录态和网关请求头由项目请求头提供；生成 DSL 时不要插入登录步骤、"
+        "认证接口、token/cookie/session extract 或认证 header 占位符。"
+    )
 
 
 def _runtime_guidance(effective_mode: str) -> str:

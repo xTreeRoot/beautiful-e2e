@@ -225,7 +225,7 @@ def _compact_project_repository(repository: dict[str, Any]) -> dict[str, Any]:
         "kind": repository.get("kind"),
         "path": repository.get("path"),
         "exists": repository.get("exists"),
-        "analysis": repository.get("analysis"),
+        "analysis": _compact_project_analysis(repository.get("analysis")),
         "route_count": repository.get("route_count"),
         "dom_target_count": repository.get("dom_target_count"),
         "route_contract_profile": repository.get("route_contract_profile"),
@@ -240,6 +240,92 @@ def _compact_project_repository(repository: dict[str, Any]) -> dict[str, Any]:
             if isinstance(example, dict)
         ]
     return {key: value for key, value in compacted.items() if value not in (None, "", [], {})}
+
+
+def _compact_project_analysis(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    compacted = {
+        "version": value.get("version"),
+        "analysis_mode": value.get("analysis_mode"),
+        "review": value.get("review"),
+        "relationship_guidance": value.get("relationship_guidance"),
+        "route_count": value.get("route_count"),
+        "dom_target_count": value.get("dom_target_count"),
+    }
+    modules = value.get("modules")
+    if isinstance(modules, list):
+        compacted["modules"] = [
+            _compact_analysis_module(module)
+            for module in modules[:16]
+            if isinstance(module, dict)
+        ]
+    relationships = value.get("relationships")
+    if isinstance(relationships, list):
+        compacted["relationships"] = [
+            _compact_analysis_relationship(item)
+            for item in relationships[:32]
+            if isinstance(item, dict)
+        ]
+    return {key: item for key, item in compacted.items() if item not in (None, "", [], {})}
+
+
+def _compact_analysis_module(module: dict[str, Any]) -> dict[str, Any]:
+    routes = module.get("routes")
+    entrypoints = module.get("entrypoint_candidates")
+    return {
+        "id": module.get("id"),
+        "name": module.get("name"),
+        "domain": module.get("domain"),
+        "route_count": module.get("route_count"),
+        "scope_boundary": _trim_text(module.get("scope_boundary"), 260),
+        "entrypoint_candidates": [
+            _compact_analysis_route(route)
+            for route in (entrypoints or [])[:6]
+            if isinstance(route, dict)
+        ],
+        "routes": [
+            _compact_analysis_route(route)
+            for route in (routes or [])[:8]
+            if isinstance(route, dict)
+        ],
+        "evidence": [
+            _trim_text(item, 220)
+            for item in (module.get("evidence") or [])[:6]
+            if isinstance(item, str)
+        ],
+        "review_status": module.get("review_status"),
+    }
+
+
+def _compact_analysis_route(route: dict[str, Any]) -> dict[str, Any]:
+    compacted = _compact_route(route)
+    for key in ["role", "produces", "consumes", "request_body_fields"]:
+        value = route.get(key)
+        if value not in (None, "", [], {}):
+            compacted[key] = value
+    return compacted
+
+
+def _compact_analysis_relationship(item: dict[str, Any]) -> dict[str, Any]:
+    from_route = item.get("from_route") if isinstance(item.get("from_route"), dict) else {}
+    to_route = item.get("to_route") if isinstance(item.get("to_route"), dict) else {}
+    return {
+        "type": item.get("type"),
+        "variable": item.get("variable"),
+        "from_route": _compact_route(from_route),
+        "to_route": _compact_route(to_route),
+        "from_module": item.get("from_module"),
+        "to_module": item.get("to_module"),
+        "confidence": item.get("confidence"),
+        "confirmed": item.get("confirmed"),
+        "reason": _trim_text(item.get("reason"), 220),
+        "evidence": [
+            _trim_text(evidence, 220)
+            for evidence in (item.get("evidence") or [])[:4]
+            if isinstance(evidence, str)
+        ],
+    }
 
 
 def _compact_auth_profile(value: dict[str, Any]) -> dict[str, Any]:
