@@ -52,12 +52,8 @@ from app.services.ai_settings import (
     AI_USAGE_DSL_GENERATION,
     settings_for_ai_usage,
 )
-from app.services.api_flow_runtime_agent import (
-    ApiFlowResponseHistory,
-    RuntimeVariableInference,
-    build_api_flow_runtime_agent,
-)
-from app.services.api_flow_variables import MissingApiFlowVariableError
+from app.services.api_case_run_orchestrator import BackendApiCaseRunOrchestrator
+from app.services.api_flow_runtime_agent import build_api_flow_runtime_agent
 from app.services.ai_case_generator import GeneratedCase
 from app.services.browser_case_runner import BrowserCaseRunner
 from app.services.case_runner import ApiCaseRunner
@@ -581,176 +577,26 @@ def run_backend_api_case_stream(
         raise HTTPException(status_code=400, detail="当前用例没有可执行接口请求")
     is_single_step_debug = payload.step_id is not None or payload.step_override is not None
     project_llm_context = build_project_llm_context(project.id, project_settings, db)
-    runtime_agent = None
-    if not is_single_step_debug:
-        settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_API_RUNTIME)
-        runtime_agent = build_api_flow_runtime_agent(
-            settings,
-            project_context=project_llm_context,
-        )
+    settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_API_RUNTIME)
+    runtime_agent = build_api_flow_runtime_agent(
+        settings,
+        project_context=project_llm_context,
+    )
+    orchestrator = BackendApiCaseRunOrchestrator(
+        runner=runner,
+        runtime_agent=runtime_agent,
+        fail_fast=payload.fail_fast,
+        is_single_step_debug=is_single_step_debug,
+    )
 
     def events() -> Iterator[str]:
-        passed = 0
-        failed = 0
-        flow_variables: dict[str, Any] = {}
-        response_history: list[ApiFlowResponseHistory] = []
-        yield sse_event(
-            "start",
-            {
-                "message": "开始调试单个接口节点。" if is_single_step_debug else "开始执行后端接口用例。",
-                "stage": "start",
-                "case_id": case.id,
-                "case_title": case.title,
-                "api_base_url": environment_settings["api_base_url"],
-                "environment": environment_settings["environment"],
-                "total": len(api_steps),
-            },
-        )
-
-        for step in api_steps:
-            runtime_inferences: list[RuntimeVariableInference] = []
-            attempted_variables: set[str] = set()
-            request_spec = None
-            skip_step = False
-            while True:
-                try:
-                    request_spec = runner.build_request(step, flow_variables)
-                    break
-                except MissingApiFlowVariableError as exc:
-                    if is_single_step_debug:
-                        failed += 1
-                        error = (
-                            f"单节点调试未填写变量：{exc.variable_name}，"
-                            "请在 Path、Query 或 Body 中手动填入实际值。"
-                        )
-                        result = runner.build_step_error_result(step, error)
-                        yield sse_event("result", result.event_payload())
-                        skip_step = True
-                        break
-                    if exc.variable_name in attempted_variables:
-                        failed += 1
-                        result = runner.build_step_error_result(step, str(exc))
-                        yield sse_event("result", result.event_payload())
-                        if payload.fail_fast:
-                            break
-                        skip_step = True
-                        break
-                    attempted_variables.add(exc.variable_name)
-                    yield sse_event(
-                        "inference",
-                        _runtime_inference_event_payload(
-                            step,
-                            variable=exc.variable_name,
-                            status="running",
-                            message=f"正在使用运行期 agent 推导变量：{exc.variable_name}",
-                        ),
-                    )
-                    if runtime_agent is None:
-                        failed += 1
-                        result = runner.build_step_error_result(step, str(exc))
-                        yield sse_event("result", result.event_payload())
-                        if payload.fail_fast:
-                            break
-                        skip_step = True
-                        break
-                    inference = runtime_agent.infer_missing_variable(
-                        variable=exc.variable_name,
-                        step=step,
-                        known_variables=flow_variables,
-                        response_history=response_history,
-                    )
-                    if inference is None:
-                        failed += 1
-                        error = f"运行期 agent 无法从前序响应推导变量：{exc.variable_name}"
-                        yield sse_event(
-                            "inference",
-                            _runtime_inference_event_payload(
-                                step,
-                                variable=exc.variable_name,
-                                status="failed",
-                                message=error,
-                            ),
-                        )
-                        result = runner.build_step_error_result(step, error)
-                        yield sse_event("result", result.event_payload())
-                        if payload.fail_fast:
-                            break
-                        skip_step = True
-                        break
-                    flow_variables[exc.variable_name] = inference.value
-                    runtime_inferences.append(inference)
-                    yield sse_event(
-                        "inference",
-                        _runtime_inference_event_payload(
-                            step,
-                            variable=exc.variable_name,
-                            status="resolved",
-                            message=f"运行期 agent 已推导变量：{exc.variable_name}",
-                            inference=inference,
-                        ),
-                    )
-                except ValueError as exc:
-                    failed += 1
-                    result = runner.build_step_error_result(step, str(exc))
-                    yield sse_event("result", result.event_payload())
-                    if payload.fail_fast:
-                        break
-                    skip_step = True
-                    break
-            if skip_step:
-                continue
-            if request_spec is None:
-                break
-
-            yield sse_event(
-                "request",
-                {
-                    "message": f"正在请求 {request_spec.method} {request_spec.url}",
-                    "stage": "request",
-                    **request_spec.event_payload(),
-                    "runtime_inferences": [
-                        inference.event_payload() for inference in runtime_inferences
-                    ],
-                },
-            )
-            result = runner.run_request(request_spec)
-            if result.ok:
-                passed += 1
-                flow_variables.update(result.extracted_variables or {})
-            else:
-                failed += 1
-            yield sse_event(
-                "result",
-                {
-                    "message": "请求通过" if result.ok else result.error or "请求未通过",
-                    "stage": "result",
-                    **result.event_payload(),
-                },
-            )
-            response_history.append(
-                ApiFlowResponseHistory(
-                    step_id=result.step_id,
-                    order_index=result.order_index,
-                    label=result.label,
-                    status_code=result.status_code,
-                    response_preview=result.response_preview,
-                    extracted_variables=result.extracted_variables or {},
-                )
-            )
-            if payload.fail_fast and not result.ok:
-                break
-
-        yield sse_event(
-            "done",
-            {
-                "message": "单节点调试完成。" if is_single_step_debug else "接口运行完成。",
-                "stage": "done",
-                "status": "passed" if failed == 0 else "failed",
-                "total": passed + failed,
-                "passed": passed,
-                "failed": failed,
-            },
-        )
+        for event_type, event_payload in orchestrator.stream(
+            case=case,
+            api_steps=api_steps,
+            api_base_url=environment_settings["api_base_url"],
+            environment=environment_settings["environment"],
+        ):
+            yield sse_event(event_type, event_payload)
 
     return StreamingResponse(
         events(),
@@ -807,33 +653,6 @@ def _step_from_run_override(case_id: str, payload: CaseRunStepOverride) -> TestS
         expected=payload.expected,
         data=payload.data,
     )
-
-
-def _runtime_inference_event_payload(
-    step: TestStep,
-    *,
-    variable: str,
-    status: str,
-    message: str,
-    inference: RuntimeVariableInference | None = None,
-) -> dict[str, Any]:
-    data = step.data or {}
-    payload: dict[str, Any] = {
-        "message": message,
-        "stage": "runtime_inference",
-        "inference_status": status,
-        "variable": variable,
-        "step_id": step.id,
-        "order_index": step.order_index,
-        "label": step.label,
-        "action": step.action,
-        "method": str(data.get("method") or "GET").upper(),
-        "target_url": step.target_url,
-        "expected_status": data.get("expected_status") or step.expected or 200,
-    }
-    if inference is not None:
-        payload["runtime_inference"] = inference.event_payload()
-    return payload
 
 
 @router.post("/cases/{case_id}/run/fullstack/stream")

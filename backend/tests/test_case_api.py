@@ -608,6 +608,142 @@ def test_stream_backend_api_run_emits_runtime_inference_events(
     assert captured_headers[1]["Authorization"] == "runtime-token"
 
 
+def test_stream_backend_api_run_retries_failed_step_with_runtime_repair(
+    monkeypatch: pytest.MonkeyPatch,
+    mysql_engine: Engine,
+) -> None:
+    engine = mysql_engine
+    captured_bodies: list[object] = []
+
+    with Session(engine) as db:
+        project = models.Project(name="backend-api-runtime-retry")
+        group = models.TestGroup(project=project, name="接口运行组", sort_order=10)
+        db.add_all([project, group])
+        db.flush()
+        case = models.TestCase(
+            project_id=project.id,
+            group_id=group.id,
+            title="失败后重试接口",
+            description="验证失败响应会作为下一次尝试的上下文。",
+            priority="P1",
+            source_prompt="接口运行",
+            code_context={"execution_mode": "backend_api"},
+            graph={"nodes": [], "edges": []},
+        )
+        db.add(case)
+        db.flush()
+        db.add_all(
+            [
+                models.TestStep(
+                    case_id=case.id,
+                    order_index=1,
+                    kind="api",
+                    label="查询可选动作",
+                    action="api_request",
+                    target_url="/actions",
+                    expected="200",
+                    data={
+                        "method": "GET",
+                        "expected_status": 200,
+                        "extract": {"actionType": "$.data.items[0].actionType"},
+                    },
+                ),
+                models.TestStep(
+                    case_id=case.id,
+                    order_index=2,
+                    kind="api",
+                    label="提交动作结果",
+                    action="api_request",
+                    target_url="/actions/complete",
+                    expected="200",
+                    data={
+                        "method": "POST",
+                        "expected_status": 200,
+                        "body": {"actionType": "{{actionType}}"},
+                    },
+                ),
+            ]
+        )
+        db.commit()
+        case_id = case.id
+
+    def fake_send(_runner, spec):
+        if spec.order_index == 1:
+            return ApiHttpResponse(
+                status_code=200,
+                headers={"Content-Type": "application/json"},
+                body=json.dumps(
+                    {
+                        "data": {
+                            "items": [
+                                {
+                                    "actionType": {
+                                        "key": "PRIMARY_ACTION",
+                                        "label": "主要动作",
+                                        "value": "primary_action",
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+            )
+
+        captured_bodies.append(spec.body)
+        if isinstance(spec.body, dict) and isinstance(spec.body.get("actionType"), dict):
+            return ApiHttpResponse(
+                status_code=500,
+                headers={"Content-Type": "application/json"},
+                body=b'{"success":false,"msg":"actionType cannot be empty"}',
+            )
+        return ApiHttpResponse(
+            status_code=200,
+            headers={"Content-Type": "application/json"},
+            body=b'{"success":true}',
+        )
+
+    monkeypatch.setattr("app.services.case_runner.ApiCaseRunner._send_with_urllib", fake_send)
+
+    def override_db():
+        with Session(engine) as db:
+            yield db
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_db] = override_db
+
+    with TestClient(app) as client:
+        with client.stream("POST", f"/cases/{case_id}/run/backend-api/stream", json={}) as response:
+            body = response.read().decode("utf-8")
+
+    events = _sse_events(body)
+    repair_events = [payload for name, payload in events if name == "repair"]
+    request_events = [payload for name, payload in events if name == "request"]
+    result_events = [payload for name, payload in events if name == "result"]
+    done_payload = next(payload for name, payload in events if name == "done")
+
+    assert response.status_code == 200
+    assert captured_bodies == [
+        {
+            "actionType": {
+                "key": "PRIMARY_ACTION",
+                "label": "主要动作",
+                "value": "primary_action",
+            }
+        },
+        {"actionType": "PRIMARY_ACTION"},
+    ]
+    assert [payload["repair_status"] for payload in repair_events] == ["running", "resolved"]
+    assert repair_events[1]["runtime_repair"]["body_replaced"] is True
+    assert request_events[-1]["attempt"] == 2
+    assert result_events[-1]["ok"] is True
+    assert result_events[1]["retry_pending"] is True
+    assert done_payload["status"] == "passed"
+    assert done_payload["passed"] == 2
+    assert done_payload["failed"] == 0
+
+
 def test_api_runner_passes_extracted_response_variable_to_later_body() -> None:
     sent_bodies: list[dict] = []
 

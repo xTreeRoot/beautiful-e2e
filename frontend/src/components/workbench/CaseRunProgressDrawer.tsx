@@ -258,6 +258,12 @@ function statusText(step: CaseRunStepState) {
 }
 
 function inferenceTitle(inference: NonNullable<CaseRunStepState['runtimeInferences']>[number]) {
+  if (inference.kind === 'repair') {
+    if (inference.status === 'running') return 'AI 正在准备重试数据';
+    if (inference.status === 'failed') return 'AI 未能准备重试数据';
+    const confidence = inference.confidence !== null ? ` · ${Math.round(inference.confidence * 100)}%` : '';
+    return `AI 已准备重试数据${confidence}`;
+  }
   if (inference.status === 'running') return `AI 正在推导 ${inference.variable}`;
   if (inference.status === 'failed') return `AI 未能推导 ${inference.variable}`;
   const confidence = inference.confidence !== null ? ` · ${Math.round(inference.confidence * 100)}%` : '';
@@ -266,6 +272,11 @@ function inferenceTitle(inference: NonNullable<CaseRunStepState['runtimeInferenc
 
 function inferenceDetail(inference: NonNullable<CaseRunStepState['runtimeInferences']>[number]) {
   if (inference.status === 'running') return inference.message || '正在读取前序响应和当前步骤契约';
+  if (inference.kind === 'repair') {
+    const source = inference.source ? `来源：${inference.source}` : '来源：失败响应';
+    const reason = inference.reason ? `；${inference.reason}` : '';
+    return `${source}${reason}`;
+  }
   const source = inference.sourceStepLabel ? `来源：${inference.sourceStepLabel}` : '来源：前序响应';
   const path = inference.sourceJsonPath ? `；路径：${inference.sourceJsonPath}` : '';
   const reason = inference.reason ? `；${inference.reason}` : '';

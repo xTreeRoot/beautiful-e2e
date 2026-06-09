@@ -110,6 +110,15 @@ export function useCaseRunProgress() {
           steps: upsertCaseRunStep(current.steps, step)
         };
       }
+      if (event.type === 'repair') {
+        const previous = current.steps.find((step) => step.stepId === stringEventValue(event.step_id));
+        const step = caseRunStepFromEvent(event, 'running', previous);
+        return {
+          ...current,
+          detail: event.message || '正在根据失败响应准备下一次请求数据',
+          steps: upsertCaseRunStep(current.steps, step)
+        };
+      }
       if (event.type === 'result') {
         const previous = current.steps.find((step) => step.stepId === stringEventValue(event.step_id));
         const step = caseRunStepFromEvent(event, event.ok ? 'passed' : 'failed', previous);
@@ -184,7 +193,10 @@ function caseRunStepFromEvent(
       event.status_code === null ? null : numberEventValue(event.status_code) ?? previous?.statusCode ?? null,
     durationMs: numberEventValue(event.duration_ms) ?? previous?.durationMs ?? null,
     status,
-    error: event.error ?? previous?.error ?? null,
+    error:
+      event.type === 'result'
+        ? nullableStringEventValue(event.error)
+        : event.error ?? previous?.error ?? null,
     pageUrl: stringEventValue(event.page_url, previous?.pageUrl),
     screenshotDataUrl: stringEventValue(event.screenshot_data_url, previous?.screenshotDataUrl),
     responsePreview: stringEventValue(event.response_preview, previous?.responsePreview),
@@ -201,6 +213,7 @@ function caseRunInferencesFromEvent(event: CaseRunStreamEvent): CaseRunStepState
     const inference = plainRecord(event.runtime_inference);
     return [
       {
+        kind: 'variable' as const,
         variable: stringEventValue(event.variable ?? inference?.variable),
         status: caseRunInferenceStatus(event.inference_status),
         confidence: numberEventValue(inference?.confidence) ?? null,
@@ -213,11 +226,29 @@ function caseRunInferencesFromEvent(event: CaseRunStreamEvent): CaseRunStepState
     ].filter((item) => item.variable);
   }
 
+  if (event.type === 'repair') {
+    const repair = plainRecord(event.runtime_repair);
+    return [
+      {
+        kind: 'repair' as const,
+        variable: '请求数据',
+        status: caseRunInferenceStatus(event.repair_status),
+        confidence: numberEventValue(repair?.confidence) ?? null,
+        source: nullableStringEventValue(repair?.source),
+        sourceStepLabel: null,
+        sourceJsonPath: null,
+        reason: nullableStringEventValue(repair?.reason),
+        message: nullableStringEventValue(event.message)
+      }
+    ];
+  }
+
   if (Array.isArray(event.runtime_inferences)) {
     return event.runtime_inferences
       .map((item) => plainRecord(item))
       .filter((item): item is Record<string, unknown> => Boolean(item))
       .map((item) => ({
+        kind: 'variable' as const,
         variable: stringEventValue(item.variable),
         status: 'resolved' as const,
         confidence: numberEventValue(item.confidence) ?? null,
@@ -228,6 +259,23 @@ function caseRunInferencesFromEvent(event: CaseRunStreamEvent): CaseRunStepState
         message: '运行期 agent 已推导变量'
       }))
       .filter((item) => item.variable);
+  }
+
+  if (Array.isArray(event.runtime_repairs)) {
+    return event.runtime_repairs
+      .map((item) => plainRecord(item))
+      .filter((item): item is Record<string, unknown> => Boolean(item))
+      .map((item) => ({
+        kind: 'repair' as const,
+        variable: '请求数据',
+        status: 'resolved' as const,
+        confidence: numberEventValue(item.confidence) ?? null,
+        source: nullableStringEventValue(item.source),
+        sourceStepLabel: null,
+        sourceJsonPath: null,
+        reason: nullableStringEventValue(item.reason),
+        message: '运行期 agent 已准备重试数据'
+      }));
   }
 
   return undefined;

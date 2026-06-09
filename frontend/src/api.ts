@@ -128,7 +128,7 @@ export type ProjectAnalysisStreamEvent = {
 };
 
 export type CaseRunStreamEvent = {
-  type: 'start' | 'inference' | 'request' | 'result' | 'done' | 'error' | string;
+  type: 'start' | 'inference' | 'repair' | 'request' | 'result' | 'done' | 'error' | string;
   message?: string;
   stage?: string;
   case_id?: string;
@@ -158,9 +158,12 @@ export type CaseRunStreamEvent = {
   response_preview?: string;
   response_content_type?: string | null;
   inference_status?: 'running' | 'resolved' | 'failed' | string;
+  repair_status?: 'running' | 'resolved' | 'failed' | string;
   variable?: string;
   runtime_inference?: Record<string, unknown>;
   runtime_inferences?: Array<Record<string, unknown>>;
+  runtime_repair?: Record<string, unknown>;
+  runtime_repairs?: Array<Record<string, unknown>>;
   [key: string]: unknown;
 };
 

@@ -93,6 +93,7 @@ export type CaseRunStepState = {
 };
 
 export type CaseRunInferenceState = {
+  kind?: 'variable' | 'repair';
   variable: string;
   status: CaseRunInferenceStatus;
   confidence: number | null;

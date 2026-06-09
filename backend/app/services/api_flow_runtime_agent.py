@@ -59,6 +59,51 @@ class RuntimeVariableInference:
         }
 
 
+@dataclass(frozen=True)
+class ApiFlowFailureAttempt:
+    attempt: int
+    status_code: int | None
+    expected_status: int
+    error: str | None
+    response_preview: str
+    response_content_type: str | None
+    request: dict[str, Any]
+
+    def as_prompt_dict(self) -> dict[str, Any]:
+        return {
+            "attempt": self.attempt,
+            "status_code": self.status_code,
+            "expected_status": self.expected_status,
+            "error": self.error,
+            "response_preview": self.response_preview[:4000],
+            "response_content_type": self.response_content_type,
+            "request": self.request,
+        }
+
+
+@dataclass(frozen=True)
+class RuntimeRequestRepair:
+    confidence: float
+    source: str
+    reason: str
+    variable_updates: dict[str, Any]
+    body_patch: dict[str, Any]
+    body: Any | None = None
+
+    def has_changes(self) -> bool:
+        return self.body is not None or bool(self.body_patch) or bool(self.variable_updates)
+
+    def event_payload(self) -> dict[str, Any]:
+        return {
+            "confidence": self.confidence,
+            "source": self.source,
+            "reason": self.reason,
+            "variable_names": sorted(self.variable_updates),
+            "body_patch_keys": sorted(self.body_patch),
+            "body_replaced": self.body is not None,
+        }
+
+
 class ApiFlowRuntimeAgent:
     """接口运行期参数推导 agent。
 
@@ -186,6 +231,99 @@ class ApiFlowRuntimeAgent:
             source_json_path=_string_or_none(obj.get("source_json_path")),
             reason=str(obj.get("reason") or "AI 从前序响应中推导变量。"),
         )
+
+    def repair_failed_request(
+        self,
+        *,
+        step: TestStep,
+        known_variables: dict[str, Any],
+        response_history: list[ApiFlowResponseHistory],
+        failed_attempts: list[ApiFlowFailureAttempt],
+    ) -> RuntimeRequestRepair | None:
+        """根据失败响应为下一次请求准备业务数据修复。
+
+        修复只作用于变量和请求体，不改认证请求头；每次调用都会看到完整失败尝试，
+        让 AI 或确定性规则能基于上一次返回继续收敛参数。
+        """
+
+        if not failed_attempts:
+            return None
+
+        deterministic = self._deterministic_request_repair(failed_attempts[-1])
+        if deterministic is not None:
+            return deterministic
+
+        if self.ai_client is None:
+            return None
+        ai_result = self._ai_request_repair(step, known_variables, response_history, failed_attempts)
+        if ai_result is None or ai_result.confidence < self.min_confidence:
+            return None
+        return ai_result
+
+    def _deterministic_request_repair(
+        self,
+        failed_attempt: ApiFlowFailureAttempt,
+    ) -> RuntimeRequestRepair | None:
+        body = failed_attempt.request.get("body")
+        changed, repaired_body = _enum_like_body_scalars(body)
+        if not changed:
+            return None
+        return RuntimeRequestRepair(
+            confidence=0.88,
+            source="deterministic_enum_body_leaf",
+            reason="失败请求体包含枚举/选项对象，下一次尝试改用其中的稳定标量值。",
+            variable_updates={},
+            body_patch={},
+            body=repaired_body,
+        )
+
+    def _ai_request_repair(
+        self,
+        step: TestStep,
+        known_variables: dict[str, Any],
+        response_history: list[ApiFlowResponseHistory],
+        failed_attempts: list[ApiFlowFailureAttempt],
+    ) -> RuntimeRequestRepair | None:
+        system = (
+            "你是接口测试运行期失败重试 agent。只能根据当前步骤、已执行响应、"
+            "本接口每次失败响应和已知变量，为下一次请求准备业务参数。"
+            "不要修改认证 header，不要编造外部固定值，不要输出真实请求头。"
+            "如果无法从失败上下文或前序响应确定修复值，返回空修复和低置信度。"
+            "只返回 JSON 对象。"
+        )
+        payload = {
+            "project_context": self.project_context,
+            "current_step": {
+                "label": step.label,
+                "target_url": step.target_url,
+                "data": step.data or {},
+            },
+            "known_variable_names": sorted(known_variables),
+            "previous_responses": [item.as_prompt_dict() for item in response_history[-8:]],
+            "failed_attempts": [item.as_prompt_dict() for item in failed_attempts[-3:]],
+            "json_schema": {
+                "confidence": "0 到 1",
+                "variables": "需要覆盖或补充的变量对象；只写业务变量",
+                "body_patch": "需要浅合并到请求 body 的字段对象",
+                "body": "需要替换整个请求 body 时返回对象/数组/字符串，否则为 null",
+                "reason": "中文说明，必须指出使用了哪次失败响应或前序响应",
+            },
+        }
+        try:
+            raw = self.ai_client.complete(system=system, prompt=json.dumps(payload, ensure_ascii=False))
+            obj = parse_case_generation_json(raw, "runtime_request_repair_agent")
+        except Exception:
+            return None
+
+        repair = RuntimeRequestRepair(
+            confidence=_float_confidence(obj.get("confidence")),
+            source="ai_failure_context_repair",
+            reason=str(obj.get("reason") or "AI 根据失败响应准备下一次请求数据。"),
+            variable_updates=_dict_or_empty(obj.get("variables")),
+            body_patch=_dict_or_empty(obj.get("body_patch")),
+            body=obj.get("body") if obj.get("body") is not None else None,
+        )
+        return repair if repair.has_changes() else None
 
 
 def build_api_flow_runtime_agent(
@@ -342,6 +480,55 @@ def _is_non_null_scalar(value: Any) -> bool:
     return isinstance(value, str | int | float | bool)
 
 
+def _enum_like_body_scalars(value: Any) -> tuple[bool, Any]:
+    """把请求体里明显的枚举/选项对象替换成可被 DTO 接收的标量。"""
+
+    if isinstance(value, dict):
+        scalar_leaf = _preferred_enum_like_scalar_leaf(value)
+        if scalar_leaf is not None:
+            return True, scalar_leaf[1]
+
+        changed = False
+        next_value: dict[str, Any] = {}
+        for key, item in value.items():
+            item_changed, next_item = _enum_like_body_scalars(item)
+            changed = changed or item_changed
+            next_value[str(key)] = next_item
+        return changed, next_value
+
+    if isinstance(value, list):
+        changed = False
+        next_items: list[Any] = []
+        for item in value:
+            item_changed, next_item = _enum_like_body_scalars(item)
+            changed = changed or item_changed
+            next_items.append(next_item)
+        return changed, next_items
+
+    return False, value
+
+
+def _preferred_enum_like_scalar_leaf(value: Any) -> tuple[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    lowered = {str(key).lower(): key for key in value}
+    descriptor_keys = {"label", "name", "title", "desc", "description", "text"}
+    has_descriptor = any(key in lowered for key in descriptor_keys)
+    has_value_pair = "value" in lowered and len(value) > 1
+    if not has_descriptor and not has_value_pair:
+        return None
+
+    for preferred in ("key", "code", "value"):
+        key = lowered.get(preferred)
+        if key is None:
+            continue
+        scalar = value.get(key)
+        if _is_non_null_scalar(scalar):
+            return str(key), scalar
+    return None
+
+
 def _find_first_alias_in_text(text: str, aliases: list[str]) -> tuple[str, Any] | None:
     """从被截断的 JSON 预览中按字段名提取基础值。
 
@@ -371,6 +558,16 @@ def _parse_json_scalar(token: str) -> Any | None:
         return json.loads(token)
     except json.JSONDecodeError:
         return None
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): item
+        for key, item in value.items()
+        if str(key).strip()
+    }
 
 
 def _float_confidence(value: Any) -> float:
