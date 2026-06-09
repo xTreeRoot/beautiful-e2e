@@ -33,6 +33,8 @@ def enforce_api_route_contracts(
     generated: GeneratedCase,
     routes: list[dict[str, Any]],
     reference_documents: list[dict[str, Any]] | None = None,
+    *,
+    allow_fixture_parameter_links: bool = True,
 ) -> GeneratedCase:
     """按真实路由契约修正模型返回的接口步骤。
 
@@ -74,7 +76,21 @@ def enforce_api_route_contracts(
                 )
 
         _merge_route_contract(data, route)
-        changed = _merge_fixture_parameter_links(data, step, reference_fixtures) or changed
+        if allow_fixture_parameter_links:
+            changed = _merge_fixture_parameter_links(data, step, reference_fixtures) or changed
+        else:
+            removed_fixture_links = _remove_fixture_parameter_links(data)
+            if removed_fixture_links:
+                changed = True
+                step_corrections.append(
+                    {
+                        "field": "parameter_links",
+                        "reason": (
+                            "当前生成要求从上游查询真实发现实体，引用文档固定 ID "
+                            "不能作为 required 参数来源。"
+                        ),
+                    }
+                )
         route_method = str(route.get("method") or data.get("method") or "GET").upper()
         current_method = str(data.get("method") or "GET").upper()
         if route_method != current_method and route_method != "ANY":
@@ -456,6 +472,23 @@ def _merge_fixture_parameter_links(
             changed = True
     data["parameter_links"] = current_links
     return changed
+
+
+def _remove_fixture_parameter_links(data: dict[str, Any]) -> int:
+    links = data.get("parameter_links")
+    if not isinstance(links, list):
+        return 0
+    next_links = [
+        item
+        for item in links
+        if not (isinstance(item, dict) and "explicit_fixture" in str(item.get("reason") or ""))
+    ]
+    removed = len(links) - len(next_links)
+    if next_links:
+        data["parameter_links"] = next_links
+    else:
+        data.pop("parameter_links", None)
+    return removed
 
 
 def _reference_fixture_body_value(

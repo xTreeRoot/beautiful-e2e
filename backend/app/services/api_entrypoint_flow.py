@@ -160,10 +160,43 @@ def _link_dynamic_path_ids(steps: list[GeneratedStep]) -> tuple[list[GeneratedSt
         target_url = step.target_url or ""
         changed = False
         for variable, literal in pairs:
-            if _previous_step_extracting(variable, next_steps[:index]) is not None:
+            previous_producer = _previous_step_extracting(variable, next_steps[:index])
+            if previous_producer is not None:
+                json_path = _json_path_from_extracting_step(previous_producer, variable)
+                target_url = _replace_path_literal(target_url, literal, f"{{{{{variable}}}}}")
+                _merge_parameter_link(data, variable, previous_producer, json_path)
+                _remove_superseded_fixture_links(data, variable, literal)
+                changed = True
+                changes.append(
+                    {
+                        "type": "dynamic_parameter_placeholder_restored",
+                        "variable": variable,
+                        "from_step_label": previous_producer.label,
+                        "to_step_label": step.label,
+                        "from_json_path": json_path,
+                        "literal_replaced": literal,
+                        "reason": "前置步骤已生产该变量，已把下游硬编码 ID 改回变量占位符。",
+                    }
+                )
                 continue
             producer_index = _previous_dynamic_producer_index(next_steps[:index], variable)
             if producer_index is None:
+                target_url = _replace_path_literal(target_url, literal, f"{{{{{variable}}}}}")
+                _remove_superseded_fixture_links(data, variable, literal)
+                _mark_unresolved_dynamic_parameter(data, variable, literal)
+                changed = True
+                changes.append(
+                    {
+                        "type": "dynamic_parameter_requires_upstream",
+                        "variable": variable,
+                        "to_step_label": step.label,
+                        "literal_replaced": literal,
+                        "reason": (
+                            "用户要求真实查询发现实体，固定 ID 已降级为待绑定变量，"
+                            "需要补充能生产该变量的上游接口。"
+                        ),
+                    }
+                )
                 continue
 
             producer = next_steps[producer_index]
@@ -399,6 +432,13 @@ def _previous_step_extracting(variable: str, previous_steps: list[GeneratedStep]
     return None
 
 
+def _json_path_from_extracting_step(step: GeneratedStep, variable: str) -> str:
+    extract = (step.data or {}).get("extract")
+    if isinstance(extract, dict) and extract.get(variable):
+        return str(extract[variable])
+    return "$.data.%s" % variable
+
+
 def _merge_parameter_link(
     data: dict[str, Any],
     variable: str,
@@ -439,6 +479,30 @@ def _remove_superseded_fixture_links(data: dict[str, Any], variable: str, litera
             and "explicit_fixture" in str(item.get("reason") or "")
         )
     ]
+
+
+def _mark_unresolved_dynamic_parameter(data: dict[str, Any], variable: str, literal: str) -> None:
+    item = {
+        "type": "missing_upstream_step",
+        "variable": variable,
+        "literal_value": literal,
+        "location": "target_url",
+        "reason": "动态发现链路不能消费文档固定 ID，需要前置响应 extract 生产该变量。",
+    }
+    for field in ["unresolved_parameters", "missing_upstream_steps"]:
+        current = [entry for entry in data.get(field, []) if isinstance(entry, dict)]
+        key = (item["type"], item["variable"], item["location"])
+        if not any(
+            (
+                str(entry.get("type") or ""),
+                str(entry.get("variable") or ""),
+                str(entry.get("location") or ""),
+            )
+            == key
+            for entry in current
+        ):
+            current.append(dict(item))
+        data[field] = current
 
 
 def _replace_path_literal(target_url: str, literal: str, placeholder: str) -> str:

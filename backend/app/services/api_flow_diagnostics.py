@@ -4,6 +4,7 @@ from dataclasses import replace
 import re
 from typing import Any
 
+from app.services.api_route_matching import query_params_from_url
 from app.services.api_flow_variables import placeholders_in_value
 from app.services.ai_case_generator import GeneratedCase, GeneratedStep
 
@@ -122,6 +123,18 @@ def _diagnostics_for_step(
             }
         )
 
+    for variable in _missing_required_query_parameters(step.target_url, data):
+        candidates = _candidate_producer_routes(variable, routes, step)
+        diagnostics.append(
+            {
+                "type": "missing_upstream_step",
+                "variable": variable,
+                "location": "query",
+                "reason": "真实路由声明该 query 必填，但 DSL 没有提供值或前置变量来源。",
+                "candidate_routes": candidates,
+            }
+        )
+
     return diagnostics
 
 
@@ -226,6 +239,24 @@ def _has_explicit_fixture_link(data: dict[str, Any], variable: str, literal: str
             continue
         return any(token in text for token in ["固定测试夹具", "显式测试夹具", "explicit_fixture"])
     return False
+
+
+def _missing_required_query_parameters(target_url: str | None, data: dict[str, Any]) -> list[str]:
+    parameters = data.get("route_parameters")
+    if not isinstance(parameters, list):
+        return []
+    present = set(query_params_from_url(target_url or ""))
+    missing: list[str] = []
+    for parameter in parameters:
+        if not isinstance(parameter, dict):
+            continue
+        if str(parameter.get("in") or "").lower() != "query":
+            continue
+        name = str(parameter.get("name") or "").strip()
+        if not name or name in present or not parameter.get("required"):
+            continue
+        missing.append(name)
+    return missing
 
 
 def _candidate_producer_routes(

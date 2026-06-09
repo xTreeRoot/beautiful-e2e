@@ -16,6 +16,7 @@ from app.services.ai.codex_bridge import CodexBridgeCaseProvider, OpenAICompatib
 from app.services.ai.codex_exec import CodexExecCaseProvider
 from app.services.ai.rule_based import RuleBasedCaseProvider
 from app.services.ai_case_generator import CaseGenerator, GeneratedCase
+from app.services.flow_entrypoint import flow_entrypoint_from_prompt
 
 ProviderFactory = Callable[[Settings], CaseGenerationProvider]
 
@@ -170,10 +171,13 @@ def _annotate_generated_case(
 ) -> GeneratedCase:
     if context.execution_mode != "backend_api":
         return generated
+    flow_entrypoint = flow_entrypoint_from_prompt(context.prompt)
+    dynamic_discovery_required = bool(flow_entrypoint.get("requires_dynamic_discovery"))
     enforced = enforce_api_route_contracts(
         generated,
         context.backend.routes,
         context.reference_documents,
+        allow_fixture_parameter_links=not dynamic_discovery_required,
     )
     enforced = sanitize_backend_api_steps(enforced, context.backend.routes)
     enforced = enforce_api_entrypoint_flow(

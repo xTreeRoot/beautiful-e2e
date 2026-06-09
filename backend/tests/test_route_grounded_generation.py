@@ -505,6 +505,115 @@ def test_entrypoint_flow_uses_dynamic_resource_id_when_prompt_requires_real_disc
     )
 
 
+def test_entrypoint_flow_downgrades_fixture_id_when_dynamic_producer_is_missing() -> None:
+    generated = GeneratedCase(
+        title="资源业务流程链路",
+        description="资源业务流程链路",
+        priority="P1",
+        steps=[
+            GeneratedStep(
+                kind="api",
+                label="流程首页",
+                action="api_request",
+                target_url="/customer/api/pb/workflows/resources/2057302278429007873/home",
+                expected="200",
+                data={
+                    "method": "GET",
+                    "expected_status": 200,
+                    "route_path_template": "/api/pb/workflows/resources/{resourceId}/home",
+                    "parameter_links": [
+                        {
+                            "variable": "resourceId",
+                            "value": "2057302278429007873",
+                            "location": "target_url",
+                            "reason": "引用文档声明的固定测试夹具 explicit_fixture。",
+                        }
+                    ],
+                },
+            )
+        ],
+        graph={"nodes": [], "edges": []},
+        code_context={"execution_mode": "backend_api"},
+    )
+
+    enforced = enforce_api_entrypoint_flow(
+        generated,
+        prompt=(
+            "不要直接测目标业务页，要从客户端资源分页查询开始，真实找到目标资源，"
+            "再用资源 id 进入详情。"
+        ),
+        routes=[
+            {
+                "method": "GET",
+                "path": "/api/pb/workflows/resources/{resourceId}/home",
+                "summary": "用户流程首页状态",
+                "source": "ResourceWorkflowHomeController.java:39",
+            }
+        ],
+        reference_documents=[],
+    )
+    data = enforced.steps[0].data or {}
+
+    assert enforced.steps[0].target_url == "/customer/api/pb/workflows/resources/{{resourceId}}/home"
+    assert "parameter_links" not in data or not data["parameter_links"]
+    missing = [
+        item
+        for item in data["missing_upstream_steps"]
+        if isinstance(item, dict) and item.get("variable") == "resourceId"
+    ][0]
+    unresolved = [
+        item
+        for item in data["unresolved_parameters"]
+        if isinstance(item, dict) and item.get("variable") == "resourceId"
+    ][0]
+    assert missing["location"] == "target_url"
+    assert unresolved["literal_value"] == "2057302278429007873"
+
+
+def test_rule_based_api_generation_keeps_path_id_placeholder_for_dynamic_discovery() -> None:
+    references = [
+        {
+            "title": "接口地图.md",
+            "content": """
+            客户端网关前缀：`/customer`
+            | 场景 | 方法路径 | 说明 |
+            | --- | --- | --- |
+            | 资源首页 | GET /api/pb/workflows/resources/{resourceId}/home | resourceId 来自资源分页 |
+
+            | 名称 | 值 | 说明 |
+            | --- | --- | --- |
+            | `resourceId` | `2057302278429007873` | 固定资源 ID |
+            """,
+        }
+    ]
+    backend = RepoSummary(
+        path="/repo",
+        exists=True,
+        files=[],
+        signals=[],
+        routes=[
+            {
+                "method": "GET",
+                "path": "/api/pb/workflows/resources/{resourceId}/home",
+                "summary": "资源首页",
+                "source": "ResourceWorkflowHomeController.java:39",
+            }
+        ],
+    )
+
+    generated = CaseGenerator().generate(
+        "不要直接测目标业务页，要从客户端资源分页查询开始，真实找到目标资源，再用资源 id 进入详情。",
+        frontend=RepoSummary(path=None, exists=False, files=[], signals=[]),
+        backend=backend,
+        execution_mode="backend_api",
+        reference_documents=references,
+    )
+    data = generated.steps[0].data or {}
+
+    assert generated.steps[0].target_url == "/customer/api/pb/workflows/resources/{{resourceId}}/home"
+    assert "parameter_links" not in data
+
+
 def test_api_route_contract_enforcer_corrects_near_miss_route_and_query_body_contract() -> None:
     generated = GeneratedCase(
         title="客户端资源查询链路",
@@ -941,6 +1050,55 @@ def test_flow_diagnostics_marks_hardcoded_id_as_missing_upstream_step() -> None:
     assert missing["literal_value"] == "2057302278429007873"
     assert missing["candidate_routes"][0]["path"] == "/api/public/resources/search"
     assert annotated.code_context["api_flow_diagnostics"]["missing_upstream_step_count"] == 1
+
+
+def test_flow_diagnostics_marks_missing_required_query_parameter() -> None:
+    generated = GeneratedCase(
+        title="资源预检链路",
+        description="资源预检链路",
+        priority="P1",
+        steps=[
+            GeneratedStep(
+                kind="api",
+                label="资源查询",
+                action="api_request",
+                target_url="/api/public/resources/search",
+                data={
+                    "method": "GET",
+                    "expected_status": 200,
+                    "extract": {"resourceId": "$.data.list[0].resourceId"},
+                },
+            ),
+            GeneratedStep(
+                kind="api",
+                label="资源预检",
+                action="api_request",
+                target_url="/api/public/resources/{{resourceId}}/preview",
+                data={
+                    "method": "GET",
+                    "expected_status": 200,
+                    "route_path_template": "/api/public/resources/{resourceId}/preview",
+                    "extract": {"resourceId": "$.data.resourceId"},
+                    "route_parameters": [
+                        {"name": "resourceId", "in": "path", "required": True},
+                        {"name": "targetUserId", "in": "query", "required": True},
+                    ],
+                },
+            )
+        ],
+        graph={"nodes": [], "edges": []},
+        code_context={"execution_mode": "backend_api"},
+    )
+
+    annotated = annotate_api_flow_diagnostics(generated, [])
+    data = annotated.steps[1].data or {}
+
+    missing = [
+        item
+        for item in data["missing_upstream_steps"]
+        if isinstance(item, dict) and item.get("variable") == "targetUserId"
+    ][0]
+    assert missing["location"] == "query"
 
 
 def test_case_generation_payload_requires_upstream_discovery_rules() -> None:

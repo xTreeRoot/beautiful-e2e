@@ -7,6 +7,7 @@ from typing import Any
 from app.services.api_flow_variables import placeholders_in_value
 from app.services.case_generation_types import GeneratedStep
 from app.services.document_case_steps import clean_document_line
+from app.services.flow_entrypoint import dynamic_entity_discovery_required
 from app.services.reference_fixtures import (
     compact_reference_fixtures,
     extract_reference_fixtures,
@@ -122,8 +123,9 @@ class ApiCaseStepBuilder:
         if not endpoints:
             return []
 
+        dynamic_required = dynamic_entity_discovery_required(prompt)
         reference_fixtures = extract_reference_fixtures(reference_documents)
-        fixed_ids = fixed_id_values(reference_fixtures)
+        fixed_ids = {} if dynamic_required else fixed_id_values(reference_fixtures)
         compact_fixtures = compact_reference_fixtures(reference_fixtures)
         steps: list[GeneratedStep] = []
         used: set[tuple[str, str]] = set()
@@ -140,7 +142,11 @@ class ApiCaseStepBuilder:
             label = self._reference_api_label(endpoint, route)
             target_url = self._with_gateway_prefix(
                 str(endpoint.get("gateway_prefix") or ""),
-                self._example_route_path(route_path, fixed_ids),
+                self._example_route_path(
+                    route_path,
+                    fixed_ids,
+                    use_placeholders=dynamic_required,
+                ),
             )
             data = {
                 "method": method,
@@ -162,13 +168,14 @@ class ApiCaseStepBuilder:
             }
             if compact_fixtures:
                 data["reference_fixtures"] = compact_fixtures
-            fixture_links = fixture_parameter_links_for_target(
-                target_url=target_url,
-                route_template=route_path,
-                fixtures=reference_fixtures,
-            )
-            if fixture_links:
-                data["parameter_links"] = fixture_links
+            if not dynamic_required:
+                fixture_links = fixture_parameter_links_for_target(
+                    target_url=target_url,
+                    route_template=route_path,
+                    fixtures=reference_fixtures,
+                )
+                if fixture_links:
+                    data["parameter_links"] = fixture_links
             if method in {"POST", "PUT", "PATCH"}:
                 data["body"] = endpoint.get("body") if isinstance(endpoint.get("body"), dict) else {}
                 data["body_required"] = True
@@ -604,8 +611,14 @@ class ApiCaseStepBuilder:
             used.add(key)
             selected.append((segment, route, f"匹配提示词片段：{segment}"))
 
+        dynamic_required = dynamic_entity_discovery_required(prompt)
         return [
-            self._route_step(route, label=self._route_label(segment, route), decision=decision)
+            self._route_step(
+                route,
+                label=self._route_label(segment, route),
+                decision=decision,
+                use_path_placeholders=dynamic_required,
+            )
             for segment, route, decision in selected[:10]
         ]
 
@@ -727,15 +740,22 @@ class ApiCaseStepBuilder:
         route: dict[str, Any],
         label: str,
         decision: str,
+        *,
+        use_path_placeholders: bool = False,
     ) -> GeneratedStep:
         method = str(route.get("method") or "GET").upper()
         path = str(route.get("path") or "/")
         data = self._route_step_data(route, method, path, decision)
+        path_examples = {} if use_path_placeholders else self._route_path_examples(route)
         return GeneratedStep(
             kind="api",
             label=label,
             action="api_request",
-            target_url=self._example_route_path(path, self._route_path_examples(route)),
+            target_url=self._example_route_path(
+                path,
+                path_examples,
+                use_placeholders=use_path_placeholders,
+            ),
             expected="200",
             data=data,
         )
@@ -804,11 +824,19 @@ class ApiCaseStepBuilder:
             return f"{segment}: {summary}"
         return f"{segment}: {route.get('method', 'GET')} {route.get('path', '/')}"
 
-    def _example_route_path(self, path: str, fixed_ids: dict[str, str] | None = None) -> str:
+    def _example_route_path(
+        self,
+        path: str,
+        fixed_ids: dict[str, str] | None = None,
+        *,
+        use_placeholders: bool = False,
+    ) -> str:
         values = fixed_ids or {}
 
         def replace(match: re.Match[str]) -> str:
             name = match.group(1)
+            if use_placeholders:
+                return f"{{{{{name}}}}}"
             return values.get(name) or values.get(name[0].lower() + name[1:]) or "1"
 
         return re.sub(r"\{([^/{}]+)\}", replace, path)
