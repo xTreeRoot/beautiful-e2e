@@ -235,11 +235,22 @@ class CaseRunStepOverride(BaseModel):
     data: dict[str, Any] | None = None
 
 
+class CaseRunEnvironmentSettings(BaseModel):
+    active_environment: str | None = None
+    active_frontend_environment: str | None = None
+    active_api_environment: str | None = None
+    base_url: str | None = None
+    api_base_url: str | None = None
+    request_headers: dict[str, Any] | None = None
+    environments: list[dict[str, Any]] | None = None
+
+
 class CaseRunRequest(BaseModel):
     timeout_seconds: float = Field(default=20.0, ge=1.0, le=120.0)
     fail_fast: bool = False
     step_id: str | None = None
     step_override: CaseRunStepOverride | None = None
+    environment_settings: CaseRunEnvironmentSettings | None = None
 
 
 class GraphOut(BaseModel):

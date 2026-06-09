@@ -182,6 +182,7 @@ export type CaseRunRequestPayload = {
   fail_fast?: boolean;
   step_id?: string;
   step_override?: CaseRunStepOverridePayload;
+  environment_settings?: ProjectSettings;
 };
 
 export type Bootstrap = {
@@ -524,8 +525,11 @@ export const api = {
     onEvent?: (event: CaseRunStreamEvent) => void,
     payload?: CaseRunRequestPayload
   ) => streamCaseRun(`/cases/${caseId}/run/backend-api/stream`, onEvent, payload),
-  runFullstackCaseStream: (caseId: string, onEvent?: (event: CaseRunStreamEvent) => void) =>
-    streamCaseRun(`/cases/${caseId}/run/fullstack/stream`, onEvent, { fail_fast: true })
+  runFullstackCaseStream: (
+    caseId: string,
+    onEvent?: (event: CaseRunStreamEvent) => void,
+    payload?: CaseRunRequestPayload
+  ) => streamCaseRun(`/cases/${caseId}/run/fullstack/stream`, onEvent, payload ?? { fail_fast: true })
 };
 
 export { demoBootstrap, demoCases } from './demoData';

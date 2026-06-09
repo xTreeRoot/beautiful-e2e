@@ -364,6 +364,7 @@ export function useWorkbenchController() {
     canvasDsl,
     nodes,
     edges,
+    environments,
     baseUrl,
     apiBaseUrl,
     activeFrontendEnvironmentKey,

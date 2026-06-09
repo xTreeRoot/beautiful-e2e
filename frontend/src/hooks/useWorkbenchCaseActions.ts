@@ -2,14 +2,20 @@ import { useState, type Dispatch, type SetStateAction } from 'react';
 
 import {
   api,
+  type CaseRunRequestPayload,
   type CaseRunStepOverridePayload,
   type CaseRunStreamEvent,
   type GenerateCaseStreamEvent,
   type Group,
   type TestCase
 } from '../api';
-import { makeDemoCase, stepsFromNodes } from '../lib/canvas';
+import {
+  makeDemoCase,
+  nodesWithEnvironmentRelativeApiTargets,
+  stepsFromNodes
+} from '../lib/canvas';
 import { applyNodeDebugDraft, withNodeDebugDraft } from '../lib/nodeDebug';
+import { environmentSettingsPatch, type ProjectEnvironment } from '../lib/projectEnvironments';
 import type {
   CanvasEdge,
   CanvasNode,
@@ -47,6 +53,7 @@ type UseWorkbenchCaseActionsOptions = {
   canvasDsl: Record<string, unknown>;
   nodes: CanvasNode[];
   edges: CanvasEdge[];
+  environments: ProjectEnvironment[];
   baseUrl: string;
   apiBaseUrl: string;
   activeFrontendEnvironmentKey: string;
@@ -91,6 +98,7 @@ export function useWorkbenchCaseActions({
   canvasDsl,
   nodes,
   edges,
+  environments,
   baseUrl,
   apiBaseUrl,
   activeFrontendEnvironmentKey,
@@ -221,9 +229,10 @@ export function useWorkbenchCaseActions({
     setIsSaving(true);
     setStatus('正在保存画布 DSL');
     try {
+      const graphNodes = nodesWithEnvironmentRelativeApiTargets(nodes);
       const saved = await api.updateCaseGraph(selectedCase.id, {
-        graph: { nodes, edges },
-        steps: stepsFromNodes(nodes),
+        graph: { nodes: graphNodes, edges },
+        steps: stepsFromNodes(graphNodes),
         execution_mode: executionMode,
         source_prompt: promptRef.current,
         actor: 'developer'
@@ -250,6 +259,8 @@ export function useWorkbenchCaseActions({
       return;
     }
     setSelectedCaseId(targetCase.id);
+    const runPayload = buildRuntimeCaseRunPayload();
+    if (!runPayload) return;
     if (executionMode === 'backend_api') {
       const runId = Date.now();
       setStatus('正在执行后端接口请求');
@@ -265,10 +276,14 @@ export function useWorkbenchCaseActions({
       });
       try {
         let failedCount = 0;
-        await api.runBackendApiCaseStream(targetCase.id, (event) => {
-          applyCaseRunEvent(runId, event);
-          if (event.type === 'done') failedCount = numberEventValue(event.failed) ?? 0;
-        });
+        await api.runBackendApiCaseStream(
+          targetCase.id,
+          (event) => {
+            applyCaseRunEvent(runId, event);
+            if (event.type === 'done') failedCount = numberEventValue(event.failed) ?? 0;
+          },
+          runPayload
+        );
         if (failedCount > 0) {
           setStatus(`接口运行完成：${failedCount} 个请求失败`);
           showToast('warning', `接口运行完成：${failedCount} 个请求失败`);
@@ -305,10 +320,14 @@ export function useWorkbenchCaseActions({
     });
     try {
       let failedCount = 0;
-      await api.runFullstackCaseStream(targetCase.id, (event) => {
-        applyCaseRunEvent(runId, event);
-        if (event.type === 'done') failedCount = numberEventValue(event.failed) ?? 0;
-      });
+      await api.runFullstackCaseStream(
+        targetCase.id,
+        (event) => {
+          applyCaseRunEvent(runId, event);
+          if (event.type === 'done') failedCount = numberEventValue(event.failed) ?? 0;
+        },
+        { ...runPayload, fail_fast: true }
+      );
       if (failedCount > 0) {
         setStatus(`浏览器流程运行完成：${failedCount} 个步骤失败`);
         showToast('warning', `浏览器流程运行完成：${failedCount} 个步骤失败`);
@@ -346,7 +365,8 @@ export function useWorkbenchCaseActions({
     const nodesWithDebugDraft = debugDraft
       ? nodes.map((node) => (node.id === targetNode.id ? withNodeDebugDraft(node, debugDraft) : node))
       : nodes;
-    const stepOverride = stepOverrideFromNode(nodesWithDebugDraft, targetNode.id, debugDraft);
+    const graphNodes = nodesWithEnvironmentRelativeApiTargets(nodesWithDebugDraft);
+    const stepOverride = stepOverrideFromNode(graphNodes, targetNode.id, debugDraft);
     if (!stepOverride || stepOverride.action !== 'api_request') {
       const message = '当前节点不是可调试的接口请求';
       setStatus(message);
@@ -355,6 +375,12 @@ export function useWorkbenchCaseActions({
     }
 
     const runId = Date.now();
+    const runPayload = buildRuntimeCaseRunPayload({
+      fail_fast: true,
+      step_id: targetNode.id,
+      step_override: stepOverride
+    });
+    if (!runPayload) return;
     setSelectedCaseId(selectedCase.id);
     setStatus(`正在保存单节点调试参数：${stepOverride.label}`);
     startCaseRunProgress({
@@ -373,8 +399,8 @@ export function useWorkbenchCaseActions({
       // 单节点调试的手工参数是 DSL 契约的一部分，先写回数据库再执行，
       // 这样刷新页面或下次打开节点时仍能继续使用上次参数。
       await api.updateCaseGraph(selectedCase.id, {
-        graph: { nodes: nodesWithDebugDraft, edges },
-        steps: stepsFromNodes(nodesWithDebugDraft),
+        graph: { nodes: graphNodes, edges },
+        steps: stepsFromNodes(graphNodes),
         execution_mode: executionMode,
         source_prompt: promptRef.current,
         actor: 'developer'
@@ -391,11 +417,7 @@ export function useWorkbenchCaseActions({
           }
           if (event.type === 'done') failedCount = numberEventValue(event.failed) ?? 0;
         },
-        {
-          fail_fast: true,
-          step_id: targetNode.id,
-          step_override: stepOverride
-        }
+        runPayload
       );
       if (failedCount > 0) {
         const detail = failedDetail || '响应未达到期望';
@@ -420,6 +442,27 @@ export function useWorkbenchCaseActions({
       cases.find((item) => item.id === caseRunProgress.caseId) ??
       selectedCase;
     void runCase(targetCase);
+  }
+
+  function buildRuntimeCaseRunPayload(
+    patch: CaseRunRequestPayload = {}
+  ): CaseRunRequestPayload | null {
+    try {
+      return {
+        ...patch,
+        environment_settings: environmentSettingsPatch(
+          environments,
+          activeFrontendEnvironmentKey,
+          activeApiEnvironmentKey
+        )
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? `请检查接口环境配置：${error.message}` : '请检查接口环境配置';
+      setStatus(message);
+      showToast('warning', message);
+      return null;
+    }
   }
 
   return {

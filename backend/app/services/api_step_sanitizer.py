@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from app.services.api_route_matching import route_matches_target, strip_gateway_prefix, url_path
 from app.services.case_generation_types import GeneratedCase, GeneratedStep
@@ -50,6 +51,7 @@ def sanitize_backend_api_steps(
 
     next_steps: list[GeneratedStep] = []
     dropped_steps: list[dict[str, Any]] = []
+    normalized_target_count = 0
     for step in generated.steps:
         if step.action != "api_request":
             next_steps.append(step)
@@ -59,16 +61,27 @@ def sanitize_backend_api_steps(
         if reason:
             dropped_steps.append(_dropped_step_payload(step, data, reason))
             continue
+        next_target_url = _environment_relative_target_url(step.target_url)
+        if next_target_url != step.target_url:
+            normalized_target_count += 1
+            next_steps.append(replace(step, target_url=next_target_url))
+            continue
         next_steps.append(step)
 
-    if not dropped_steps:
+    if not dropped_steps and normalized_target_count == 0:
         return generated
 
     context = dict(generated.code_context or {})
-    context["dropped_non_executable_api_steps"] = {
-        "reason": "生成结果包含认证说明或网关前缀伪接口，保存前已移除。",
-        "items": dropped_steps[:50],
-    }
+    if dropped_steps:
+        context["dropped_non_executable_api_steps"] = {
+            "reason": "生成结果包含认证说明或网关前缀伪接口，保存前已移除。",
+            "items": dropped_steps[:50],
+        }
+    if normalized_target_count:
+        context["api_target_url_normalized"] = {
+            "reason": "接口步骤只保留路径和 query，运行时使用项目环境基础地址。",
+            "count": normalized_target_count,
+        }
     return replace(generated, steps=next_steps, code_context=context)
 
 
@@ -132,8 +145,19 @@ def _dropped_step_payload(
     return {
         "label": step.label,
         "method": data.get("method"),
-        "target_url": step.target_url,
+        "target_url": _environment_relative_target_url(step.target_url),
         "route_path_template": data.get("route_path_template"),
         "route_summary": data.get("route_summary"),
         "reason": reason,
     }
+
+
+def _environment_relative_target_url(target_url: str | None) -> str | None:
+    """接口步骤不保存 host，避免生成结果绑定某个项目环境。"""
+
+    if not target_url:
+        return target_url
+    parsed = urlsplit(target_url)
+    if not (parsed.scheme or parsed.netloc):
+        return target_url
+    return urlunsplit(("", "", parsed.path or "/", parsed.query, parsed.fragment))

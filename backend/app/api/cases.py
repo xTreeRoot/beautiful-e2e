@@ -26,6 +26,7 @@ from app.api.case_generation_helpers import (
     save_generated_case as _save_generated_case,
     target_case_for_generation as _target_case_for_generation,
 )
+from app.api.case_run_environment import project_settings_for_case_run
 from app.core.config import get_settings
 from app.db import get_db
 from app.models import AuditEvent, TestCase, TestStep
@@ -565,7 +566,10 @@ def run_backend_api_case_stream(
 
     case = load_case(case_id, db)
     project = require_project(case.project_id, db)
-    project_settings = project_settings_with_repositories(project, db)
+    project_settings = project_settings_for_case_run(
+        project_settings_with_repositories(project, db),
+        payload,
+    )
     environment_settings = active_environment_settings(project_settings)
     runner = ApiCaseRunner(
         api_base_url=environment_settings["api_base_url"],
@@ -842,7 +846,10 @@ def run_fullstack_case_stream(
 
     case = load_case(case_id, db)
     project = require_project(case.project_id, db)
-    project_settings = project_settings_with_repositories(project, db)
+    project_settings = project_settings_for_case_run(
+        project_settings_with_repositories(project, db),
+        payload,
+    )
     environment_settings = active_environment_settings(project_settings)
     runner = BrowserCaseRunner(
         base_url=environment_settings["base_url"],

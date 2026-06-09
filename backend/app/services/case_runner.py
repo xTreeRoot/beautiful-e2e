@@ -5,7 +5,7 @@ import json
 from time import perf_counter
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from app.models import TestCase, TestStep
@@ -243,10 +243,8 @@ class ApiCaseRunner:
         )
 
     def _absolute_url(self, target: str) -> str:
-        if target.startswith(("http://", "https://")):
-            return target
-        base_url = self.api_base_url if self.api_base_url.endswith("/") else f"{self.api_base_url}/"
-        return urljoin(base_url, target)
+        target = _environment_relative_target(target)
+        return _join_environment_base_url(self.api_base_url, target)
 
     def _send_with_urllib(self, spec: ApiRequestSpec) -> ApiHttpResponse:
         headers, body = _encode_body(spec.headers, spec.body)
@@ -351,6 +349,44 @@ def _header_value(headers: dict[str, str], key: str) -> str | None:
         if header_key.lower() == key_lower:
             return value
     return None
+
+
+def _environment_relative_target(target: str) -> str:
+    """把节点里的完整 URL 收敛成路径契约，运行时再挂到当前项目环境。
+
+    接口节点可能来自历史生成结果或用户调试草稿，里面残留的 host 不能覆盖
+    当前项目选择的接口基础地址；query 和 fragment 仍属于接口目标，需要保留。
+    """
+
+    parsed = urlsplit(target)
+    if not (parsed.scheme or parsed.netloc):
+        return target
+    path = parsed.path or "/"
+    return urlunsplit(("", "", path, parsed.query, parsed.fragment))
+
+
+def _join_environment_base_url(base_url: str, target: str) -> str:
+    """按项目配置前缀拼接接口目标。
+
+    `urllib.parse.urljoin` 会在 target 以 `/` 开头时丢弃 base_url 的路径，
+    但项目里的接口基础地址可能就是网关前缀，所以这里按“配置值是前缀”的语义拼接。
+    """
+
+    base = base_url.rstrip("/")
+    target = target.strip()
+    if not target:
+        return base
+
+    parsed_base = urlsplit(base)
+    base_path = parsed_base.path.rstrip("/")
+    if base_path and (target == base_path or target.startswith(f"{base_path}/")):
+        origin = urlunsplit((parsed_base.scheme, parsed_base.netloc, "", "", ""))
+        if origin:
+            return f"{origin}{target}"
+
+    if target.startswith(("/", "?", "#")):
+        return f"{base}{target}"
+    return f"{base}/{target}"
 
 
 def _response_preview(body: bytes) -> str:

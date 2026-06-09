@@ -92,18 +92,49 @@ export function toCanvasEdges(graph: CaseGraph | null): CanvasEdge[] {
 export function stepsFromNodes(currentNodes: CanvasNode[]) {
   return currentNodes
     .filter((node) => executableKinds.has(node.data.kind))
-    .map((node, index) => ({
-      id: node.id,
-      order_index: index + 1,
-      kind: node.data.kind === 'page' ? 'setup' : node.data.kind,
-      label: node.data.label,
-      action: node.data.action,
-      selector: node.data.selector,
-      target_url: node.data.target_url,
-      value: node.data.value,
-      expected: node.data.expected,
-      data: buildStepData(node),
-    }));
+    .map((node, index) => {
+      const targetUrl =
+        node.data.action === 'api_request'
+          ? environmentRelativeApiTargetUrl(node.data.target_url)
+          : node.data.target_url;
+      return {
+        id: node.id,
+        order_index: index + 1,
+        kind: node.data.kind === 'page' ? 'setup' : node.data.kind,
+        label: node.data.label,
+        action: node.data.action,
+        selector: node.data.selector,
+        target_url: targetUrl,
+        value: node.data.value,
+        expected: node.data.expected,
+        data: buildStepData(node),
+      };
+    });
+}
+
+/**
+ * 规范化准备持久化的接口节点。
+ * 接口基础地址和认证请求头属于项目环境，节点只保存接口路径，运行时再合并。
+ */
+export function nodesWithEnvironmentRelativeApiTargets(currentNodes: CanvasNode[]): CanvasNode[] {
+  return currentNodes.map((node) => {
+    if (node.data.action !== 'api_request') return node;
+    const targetUrl = environmentRelativeApiTargetUrl(node.data.target_url);
+    if (targetUrl === node.data.target_url) return node;
+    return { ...node, data: { ...node.data, target_url: targetUrl } };
+  });
+}
+
+export function environmentRelativeApiTargetUrl(value: string | null | undefined): string | null {
+  if (!value) return value ?? null;
+  const text = value.trim();
+  if (!text) return text;
+  try {
+    const parsed = new URL(text);
+    return `${parsed.pathname || '/'}${parsed.search}${parsed.hash}`;
+  } catch {
+    return value;
+  }
 }
 
 export function buildDsl({
@@ -147,7 +178,10 @@ export function buildDsl({
       label: node.data.label,
       action: node.data.action,
       selector: node.data.selector,
-      url: node.data.target_url,
+      url:
+        node.data.action === 'api_request'
+          ? environmentRelativeApiTargetUrl(node.data.target_url)
+          : node.data.target_url,
       value: node.data.value,
       expected: node.data.expected,
       method: node.data.method,
