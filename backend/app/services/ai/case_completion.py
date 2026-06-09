@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-import re
 from typing import Any, Protocol
 
 from app.services.ai.base import CaseGenerationContext, CaseGenerationError, CaseGenerationProvider
@@ -13,6 +12,7 @@ from app.services.generation_prompts import (
     API_FACT_FEEDBACK_PROMPT,
     BACKEND_API_ROUTE_GROUNDING_PROMPT,
 )
+from app.services.flow_entrypoint import flow_entrypoint_from_prompt
 from app.services.reference_fixtures import compact_reference_fixtures, extract_reference_fixtures
 
 
@@ -227,7 +227,7 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
     reference_fixtures = compact_reference_fixtures(
         extract_reference_fixtures(context.reference_documents or [])
     )
-    flow_entrypoint = _flow_entrypoint_from_prompt(context.prompt)
+    flow_entrypoint = flow_entrypoint_from_prompt(context.prompt)
     return {
         "natural_language": context.prompt,
         "execution_mode": context.execution_mode,
@@ -259,6 +259,8 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
             "无法推断来源的 body/path/header 参数写入 data.unresolved_parameters。",
             "如果下游接口需要业务实体 ID，必须先查找能生产该 ID 的上游搜索、列表、详情、首页、预检或创建接口。",
             "不要把长数字、1、fallback 或环境变量当作业务 ID 推导结果，除非文档明确声明它是固定测试夹具。",
+            "如果 natural_language 要求真实找到、查出来、从分页/列表/搜索/查询开始再用 ID，"
+            "reference_fixtures.fixed_ids 只能作为候选过滤或断言，不能直接满足下游 required 参数。",
         ],
         "flow_entrypoint": flow_entrypoint,
         "flow_entrypoint_rules": [
@@ -267,6 +269,8 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
             "如果入口是列表、分页、搜索或查询，优先选择同领域 page/list/search/query 路由并 extract 下游需要的业务 ID。",
             "分析性链路表、认证说明、测试数据说明和断言策略不能单独成为 api_request 步骤。",
             "找不到入口真实路由时，不要输出缺少 URL 的步骤；应把缺口写入 data.missing_upstream_steps。",
+            "flow_entrypoint.requires_dynamic_discovery=true 时，下游业务 ID 必须来自入口或前置步骤 data.extract，"
+            "不要把 reference_fixtures.fixed_ids 或接口文档示例 URL 中的长数字写进 target_url。",
         ],
         "project_context": context.project_context or _default_project_context(),
         "auth_context": _auth_context_from_generation_context(context),
@@ -303,12 +307,16 @@ def build_case_generation_payload(context: CaseGenerationContext) -> dict[str, A
             "把找到的生产者步骤插入到消费者之前，并从响应中 extract 下游变量。",
             "如果生产者本身也需要 ID，继续递归倒推，直到到达搜索/列表/登录/公开入口或显式测试夹具。",
             "required=true 的依赖不能靠 parameter_links.fallback 通过；fallback 只写入诊断说明。",
+            "如果用户要求从入口查询真实发现实体，固定夹具 ID 不能作为 required=true 的生产者；"
+            "入口步骤必须 extract，下游必须用 {{变量名}}。",
         ],
         "fact_feedback_rules": [
             "看到 404、未知处理器或 0 个正确接口时，把失败 URL 当作反例，重新从项目路由目录选择真实接口。",
             "看到未能推导变量时，把它当作缺少上游生产者接口，先补搜索/列表/详情/首页/预检/创建等生产者步骤。",
             "下一轮输出必须把 route_source、route_parameters、route_request_body、extract、depends_on 和 parameter_links 写清楚。",
             "如果项目事实不足，不要硬写 URL；把缺口写入 missing_upstream_steps 和 unresolved_parameters。",
+            "如果第一步跳过用户指定的查询/分页/搜索入口，反馈为入口顺序错误，下一轮先补入口发现接口。",
+            "如果动态发现链路仍消费固定 ID，反馈为参数来源错误，下一轮把固定 ID 降级为候选/断言。",
         ],
         "requested_priority": context.priority,
         "selected_agent": context.agent,
@@ -478,52 +486,3 @@ def coerce_generated_step(item: dict[str, Any]) -> GeneratedStep:
         expected=string_or_none("expected"),
         data=data if isinstance(data, dict) else None,
     )
-
-
-def _flow_entrypoint_from_prompt(prompt: str) -> dict[str, Any]:
-    """从自然语言中提取显式流程起点，作为 LLM 生成顺序的硬约束提示。
-
-    这里只抽取“从/入口/起点/先从”这类通用表达，不理解具体业务名，避免把某个
-    项目案例写死进生成器。
-    """
-
-    raw_text = _extract_entrypoint_text(prompt)
-    rules = [
-        "第一个可执行步骤必须匹配 raw_text 对应的真实接口。",
-        "入口发现接口要先于详情、活动、提交或结果查询接口。",
-        "如果 raw_text 是列表/分页/搜索/查询意图，首步应生产下游业务实体 ID。",
-    ]
-    return {
-        "explicit": bool(raw_text),
-        "raw_text": raw_text,
-        "must_be_first_executable_step": bool(raw_text),
-        "source": "natural_language" if raw_text else None,
-        "rules": rules,
-    }
-
-
-def _extract_entrypoint_text(prompt: str) -> str | None:
-    normalized = re.sub(r"\s+", " ", prompt).strip()
-    patterns = [
-        r"(?:不要直接[^，。；;]*[，,]\s*)?要从(?P<entry>.+?)(?:开始|起|再|然后|并|，|。|；|;|$)",
-        r"(?:先|首先)?从(?P<entry>.+?)(?:开始|起|再|然后|并|，|。|；|;|$)",
-        r"(?:入口|起点)(?:是|为|从)?(?P<entry>.+?)(?:开始|起|再|然后|并|，|。|；|;|$)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, normalized)
-        if not match:
-            continue
-        entry = _clean_entrypoint_text(match.group("entry"))
-        if entry:
-            return entry
-    return None
-
-
-def _clean_entrypoint_text(value: str) -> str | None:
-    cleaned = value.strip(" ：:，,。；;")
-    cleaned = re.sub(r"^(?:客户端|用户端|前端)", "", cleaned).strip()
-    cleaned = re.sub(r"^(?:打开|进入|调用|请求)", "", cleaned).strip()
-    cleaned = re.sub(r"(?:的)?(?:流程|接口链路|测试用例|全流程)$", "", cleaned).strip()
-    if len(cleaned) < 2:
-        return None
-    return cleaned[:80]

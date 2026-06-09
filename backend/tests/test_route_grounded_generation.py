@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.api.cases import _effective_execution_mode
 from app.models import Project, Repository
+from app.services.api_entrypoint_flow import enforce_api_entrypoint_flow
 from app.services.api_flow_diagnostics import annotate_api_flow_diagnostics
 from app.services.api_generation_feedback import attach_api_generation_feedback
 from app.services.api_route_contract_enforcer import enforce_api_route_contracts
@@ -372,6 +373,108 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
     }
     assert search_data["reference_fixtures"]["fixed_ids"]["goodsId"] == "2057302278429007873"
     assert home_data["parameter_links"][0]["reason"].endswith("explicit_fixture。")
+
+
+def test_entrypoint_flow_uses_dynamic_goods_id_when_prompt_requires_real_discovery() -> None:
+    generated = GeneratedCase(
+        title="福州商品活动链路",
+        description="福州商品活动链路",
+        priority="P1",
+        steps=[
+            GeneratedStep(
+                kind="api",
+                label="活动首页",
+                action="api_request",
+                target_url="/customer/api/pb/campaign/goods/2057302278429007873/home",
+                expected="200",
+                data={
+                    "method": "GET",
+                    "expected_status": 200,
+                    "route_path_template": "/api/pb/campaign/goods/{goodsId}/home",
+                    "parameter_links": [
+                        {
+                            "variable": "goodsId",
+                            "value": "2057302278429007873",
+                            "location": "target_url",
+                            "reason": "引用文档声明的固定测试夹具 explicit_fixture。",
+                        }
+                    ],
+                },
+            )
+        ],
+        graph={"nodes": [], "edges": []},
+        code_context={"execution_mode": "backend_api"},
+    )
+    routes = [
+        {
+            "method": "POST",
+            "path": "/api/pb/goods/page",
+            "summary": "商品搜索条件分页查询商品列表",
+            "handler": "getGoodsPage",
+            "source": "CustomerSearchController.java:60",
+            "request_body": {
+                "required": True,
+                "java_type": "GoodsQry",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "page": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                        "location": {"type": "string"},
+                        "goodsName": {"type": "string"},
+                    },
+                    "required": ["location"],
+                },
+                "example": {"page": 1, "limit": 10, "location": "113.317323,23.038455"},
+            },
+            "responses": [
+                {
+                    "status": 200,
+                    "fields": ["page", "limit", "total", "list", "goodsId", "goodsName"],
+                }
+            ],
+        },
+        {
+            "method": "GET",
+            "path": "/api/pb/campaign/goods/{goodsId}/home",
+            "summary": "用户活动首页状态",
+            "source": "CustomerMarketingHomeController.java:39",
+        },
+    ]
+    references = [
+        {
+            "title": "接口地图.md",
+            "path": "/tmp/接口地图.md",
+            "content": """
+            | 名称 | 值 | 说明 |
+            | --- | --- | --- |
+            | `goodsId` | `2057302278429007873` | 福州商品 ID；首页按商品查活动 |
+            | `display_title` | `string` | 用户端标题，例如 `OIOI 福州打榜抽奖活动`。 |
+            """,
+        }
+    ]
+
+    enforced = enforce_api_entrypoint_flow(
+        generated,
+        prompt=(
+            "不要直接测营销活动页，要从客户端商品分页查询开始，真实找到福州活动商品，"
+            "再用商品 id 进入商品详情，并串起营销活动完整流程。"
+        ),
+        routes=routes,
+        reference_documents=references,
+    )
+    producer_data = enforced.steps[0].data or {}
+    consumer_data = enforced.steps[1].data or {}
+
+    assert enforced.steps[0].target_url == "/customer/api/pb/goods/page"
+    assert producer_data["body"]["goodsName"] == "OIOI 福州打榜抽奖活动"
+    assert producer_data["extract"]["goodsId"] == "$.data.list[0].goodsId"
+    assert enforced.steps[1].target_url == "/customer/api/pb/campaign/goods/{{goodsId}}/home"
+    assert consumer_data["parameter_links"][0]["source"] == "previous_response"
+    assert "value" not in consumer_data["parameter_links"][0]
+    assert enforced.code_context["api_entrypoint_flow_enforcement"]["items"][0]["type"] == (
+        "entrypoint_inserted"
+    )
 
 
 def test_api_route_contract_enforcer_corrects_near_miss_route_and_query_body_contract() -> None:
@@ -869,7 +972,9 @@ def test_case_generation_payload_extracts_explicit_flow_entrypoint() -> None:
     assert payload["flow_entrypoint"]["explicit"] is True
     assert payload["flow_entrypoint"]["raw_text"] == "商品分页查询"
     assert payload["flow_entrypoint"]["must_be_first_executable_step"] is True
+    assert payload["flow_entrypoint"]["requires_dynamic_discovery"] is True
     assert any("第一个可执行 api_request" in rule for rule in payload["flow_entrypoint_rules"])
+    assert any("fixed_ids" in rule for rule in payload["flow_entrypoint_rules"])
 
 
 def test_completion_provider_rejects_backend_api_step_without_url() -> None:

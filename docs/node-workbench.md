@@ -43,6 +43,11 @@ Codex 桥接生成器会把这些字段放进发送给已配置 Codex 供应商�
 可执行 `api_request` 必须先匹配这个入口对应的真实路由，分析性链路表、认证说明
 或测试数据说明只能写入 `step.data.flow_reason`、`route_decision` 或缺口诊断字段，
 不能保存成缺少 URL 的接口节点。
+如果提示词同时表达“真实找到”“查出来”“从分页/列表/搜索/查询开始再用 ID”等动态发现意图，
+`flow_entrypoint.requires_dynamic_discovery` 会置为 `true`。此时引用文档里的固定 ID 只能作为
+搜索过滤、候选校验或断言依据，不能直接满足下游 path/query/body 的必填业务 ID。生成结果在
+保存前还会写入 `code_context.api_entrypoint_flow_enforcement`，记录是否插入或重排了入口接口、
+是否把硬编码 ID 改成了前置 `step.data.extract` 变量。
 
 接口请求节点保存时会把请求体编辑器映射到 `step.data.body`。额外的后端路由证据
 或前端专属字段会保存在 `node.data.metadata`，并通过 `step.data` 往返传递，
@@ -66,5 +71,7 @@ Codex 桥接生成器会把这些字段放进发送给已配置 Codex 供应商�
 
 生成后反馈会写入 `code_context.api_generation_feedback`。它把 404、未知处理器、错误 method/path、
 无来源 `{{变量}}`、硬编码长 ID 和缺少上游生产者等现象整理成下一轮 agent 可读的事实提示。
+如果入口顺序或动态发现参数被后处理修正，反馈里还会包含 `entrypoint_flow_enforcement`，用于提示
+下一轮 agent 先修入口发现链路，再修下游接口参数。
 后续 prompt 应把这些失败 URL 当作反例，重新从项目分析中心和 `backend_repository_summary.routes`
 里的真实 path、query、body 契约选接口。

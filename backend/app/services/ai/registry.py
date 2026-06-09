@@ -7,6 +7,7 @@ from typing import Any
 
 from app.core.config import Settings
 from app.services.api_generation_feedback import attach_api_generation_feedback
+from app.services.api_entrypoint_flow import enforce_api_entrypoint_flow
 from app.services.api_flow_diagnostics import annotate_api_flow_diagnostics
 from app.services.api_route_contract_enforcer import enforce_api_route_contracts
 from app.services.ai.base import CaseGenerationContext, CaseGenerationError, CaseGenerationProvider
@@ -172,6 +173,12 @@ def _annotate_generated_case(
         generated,
         context.backend.routes,
         context.reference_documents,
+    )
+    enforced = enforce_api_entrypoint_flow(
+        enforced,
+        prompt=context.prompt,
+        routes=context.backend.routes,
+        reference_documents=context.reference_documents,
     )
     enforced = GeneratedCase(
         title=enforced.title,

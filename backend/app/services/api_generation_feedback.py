@@ -18,10 +18,11 @@ def attach_api_generation_feedback(generated: GeneratedCase) -> GeneratedCase:
     """
 
     context = dict(generated.code_context or {})
+    entrypoint_items = _list_items(context.get("api_entrypoint_flow_enforcement"))
     route_items = _list_items(context.get("api_route_contract_enforcement"))
     diagnostic_items = _list_items(context.get("api_flow_diagnostics"))
     step_items = _step_feedback_items(generated)
-    if not route_items and not diagnostic_items and not step_items:
+    if not entrypoint_items and not route_items and not diagnostic_items and not step_items:
         context.setdefault("api_fact_feedback_prompt", API_FACT_FEEDBACK_PROMPT)
         return replace(generated, code_context=context)
 
@@ -32,8 +33,11 @@ def attach_api_generation_feedback(generated: GeneratedCase) -> GeneratedCase:
             "把失败 URL 和硬编码参数当作反例，重新从项目路径内的真实路由目录选择接口。",
             "每个 path/query/body/header 参数都必须来自真实契约、前置 extract 或显式测试夹具。",
             "变量未能推导时，先补上游生产者接口；找不到生产者时写 missing_upstream_steps。",
+            "用户要求从查询、分页、列表或搜索真实发现实体时，固定夹具 ID 只能作为候选或断言。",
+            "第一步跳过用户指定入口时，先修入口顺序，再修下游参数。",
             "404、未知处理器和 Method Not Allowed 优先按路由不真实处理，不要继续沿用原 URL。",
         ],
+        "entrypoint_flow_enforcement": entrypoint_items[:40],
         "route_contract_corrections": route_items[:40],
         "flow_diagnostics": diagnostic_items[:40],
         "step_feedback": step_items[:40],

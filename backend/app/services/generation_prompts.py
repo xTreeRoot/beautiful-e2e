@@ -38,6 +38,10 @@ BACKEND_API_ENTRYPOINT_FIRST_PROMPT = """
    下游 URL、headers 或 body 使用 {{变量名}}，而不是硬编码长 ID。
 6. 生成顺序要保持“入口发现接口 -> 详情/确认接口 -> 业务活动/提交接口 -> 结果查询/断言接口”，
    除非用户明确要求从中间状态继续。
+7. 如果用户表达“真实找到”“查出来”“搜索出来”“从分页/列表开始再用 ID”等动态发现意图，
+   reference_fixtures.fixed_ids 只能作为搜索过滤、候选校验或断言依据，不能替代入口接口响应中的 ID。
+8. 动态发现链路里，下游 `{xxxId}`、query 或 body 的业务 ID 必须来自入口或前置步骤的
+   data.extract；消费方必须使用 `{{xxxId}}` 并写明 parameter_links。
 """.strip()
 
 
@@ -74,6 +78,10 @@ API_FLOW_RELATIONSHIP_PROMPT = """
 13. 登录态优先遵守 project_context.auth/auth_context：如果项目环境已经配置认证请求头，不要再把同名 header 生成为
     `{{customer_token}}`、`{{access_token}}` 等占位符；只有存在可执行登录接口且 auth_context 未提供
     外部登录态时，才生成登录步骤和 token extract。
+14. 文档里的固定 ID 只有在用户要求固定夹具、指定 ID、复现单个历史样本时才可直接消费；
+    当用户要求从列表、分页、搜索或查询真实发现实体时，固定 ID 要降级为候选值或断言，不满足 required=true 的依赖。
+15. 如果上游发现接口返回分页结构，优先用 `$.data.list[0].xxxId`、`$.data.records[0].xxxId`
+    或真实响应契约中的列表路径提取下游 ID；不要把文档样例 URL 中的长数字留在 target_url。
 """.strip()
 
 
@@ -95,4 +103,8 @@ API_FACT_FEEDBACK_PROMPT = """
    不要把长数字、`1`、空字符串、地名短词或 fallback 当成标准答案。
 5. 反馈摘要应说明“错误接口为什么错、应该查哪个真实路由候选、还缺哪个上游生产者”，
    方便用户把下一轮 prompt 交给任何生成 agent 复用。
+6. 如果用户已经要求从上游查询真实找到实体，而生成结果第一步仍是详情、首页、状态或提交接口，
+   反馈必须明确这是“入口顺序错误”，下一轮先补入口发现接口并用 extract 绑定下游 ID。
+7. 如果 reference_fixtures.fixed_ids 被直接写进下游路径，但用户要求动态发现，反馈必须提示
+   “固定 ID 只能作为候选/断言，不能替代前置响应变量”。
 """.strip()
