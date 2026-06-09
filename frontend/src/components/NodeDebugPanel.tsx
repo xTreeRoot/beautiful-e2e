@@ -28,6 +28,7 @@ import {
   defaultPathParams,
   pathParamNames
 } from '../lib/nodeDebug';
+import { formatJsonText, formatResponsePreview } from '../lib/responsePreview';
 import type {
   CanvasNode,
   CaseRunProgressState,
@@ -475,21 +476,4 @@ function failureReasonText(step: CaseRunStepState): string {
       ? `期望 ${step.expectedStatus}，实际无响应`
       : `期望 ${step.expectedStatus}，实际 ${step.statusCode}`;
   return [step.error, statusText].filter(Boolean).join('；');
-}
-
-function formatJsonText(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2);
-  } catch {
-    return null;
-  }
-}
-
-function formatResponsePreview(value?: string) {
-  if (!value) return null;
-  const formatted = formatJsonText(value);
-  if (formatted === null) return { text: value, isJson: false };
-  return { text: formatted, isJson: true };
 }

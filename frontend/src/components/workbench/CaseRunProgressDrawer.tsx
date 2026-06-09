@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 
+import { formatResponsePreview } from '../../lib/responsePreview';
 import type { CaseRunProgressState, CaseRunStepState } from '../../types/workbench';
 
 const { Paragraph, Text, Title } = Typography;
@@ -172,6 +173,7 @@ const CaseRunStepItem = memo(function CaseRunStepItem({
   isBackendApi: boolean;
 }) {
   const actionLabel = isBackendApi ? step.method : browserActionText(step.action);
+  const formattedResponse = formatResponsePreview(step.responsePreview);
   return (
     <section className={`case-run-step ${step.status}`}>
       <Flex align="flex-start" justify="space-between" gap={12}>
@@ -231,10 +233,10 @@ const CaseRunStepItem = memo(function CaseRunStepItem({
           preview={false}
         />
       ) : null}
-      {step.responsePreview ? (
+      {formattedResponse ? (
         <pre className="case-run-response">
           {step.responseContentType ? `# ${step.responseContentType}\n` : ''}
-          {step.responsePreview}
+          {formattedResponse.text}
         </pre>
       ) : null}
     </section>
