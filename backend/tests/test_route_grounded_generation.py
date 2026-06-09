@@ -328,7 +328,7 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
                 kind="api",
                 label="流程首页",
                 action="api_request",
-                target_url="/customer/api/pb/workflows/resources/2057302278429007873/home",
+                target_url="/customer/api/pb/workflows/resources/9000000000000000001/home",
                 expected="200",
                 data={
                     "method": "GET",
@@ -381,7 +381,7 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
 
             | 名称 | 值 | 说明 |
             | --- | --- | --- |
-            | `resourceId` | `2057302278429007873` | 固定资源 ID；首页按资源查业务流程 |
+            | `resourceId` | `9000000000000000001` | 固定资源 ID；首页按资源查业务流程 |
             """,
             "chars": 520,
             "truncated": False,
@@ -399,7 +399,7 @@ def test_api_route_contract_enforcer_uses_reference_fixture_names_for_search_bod
         "resourceName": "Alpha Demo Workflow",
         "location": "113.317323,23.038455",
     }
-    assert search_data["reference_fixtures"]["fixed_ids"]["resourceId"] == "2057302278429007873"
+    assert search_data["reference_fixtures"]["fixed_ids"]["resourceId"] == "9000000000000000001"
     assert home_data["parameter_links"][0]["reason"].endswith("explicit_fixture。")
 
 
@@ -413,7 +413,7 @@ def test_entrypoint_flow_uses_dynamic_resource_id_when_prompt_requires_real_disc
                 kind="api",
                 label="流程首页",
                 action="api_request",
-                target_url="/customer/api/pb/workflows/resources/2057302278429007873/home",
+                target_url="/customer/api/pb/workflows/resources/9000000000000000001/home",
                 expected="200",
                 data={
                     "method": "GET",
@@ -422,7 +422,7 @@ def test_entrypoint_flow_uses_dynamic_resource_id_when_prompt_requires_real_disc
                     "parameter_links": [
                         {
                             "variable": "resourceId",
-                            "value": "2057302278429007873",
+                            "value": "9000000000000000001",
                             "location": "target_url",
                             "reason": "引用文档声明的固定测试夹具 explicit_fixture。",
                         }
@@ -476,7 +476,7 @@ def test_entrypoint_flow_uses_dynamic_resource_id_when_prompt_requires_real_disc
             "content": """
             | 名称 | 值 | 说明 |
             | --- | --- | --- |
-            | `resourceId` | `2057302278429007873` | 固定资源 ID；首页按资源查业务流程 |
+            | `resourceId` | `9000000000000000001` | 固定资源 ID；首页按资源查业务流程 |
             | `display_title` | `string` | 用户端标题，例如 `Alpha Demo Workflow`。 |
             """,
         }
@@ -515,7 +515,7 @@ def test_entrypoint_flow_downgrades_fixture_id_when_dynamic_producer_is_missing(
                 kind="api",
                 label="流程首页",
                 action="api_request",
-                target_url="/customer/api/pb/workflows/resources/2057302278429007873/home",
+                target_url="/customer/api/pb/workflows/resources/9000000000000000001/home",
                 expected="200",
                 data={
                     "method": "GET",
@@ -524,7 +524,7 @@ def test_entrypoint_flow_downgrades_fixture_id_when_dynamic_producer_is_missing(
                     "parameter_links": [
                         {
                             "variable": "resourceId",
-                            "value": "2057302278429007873",
+                            "value": "9000000000000000001",
                             "location": "target_url",
                             "reason": "引用文档声明的固定测试夹具 explicit_fixture。",
                         }
@@ -567,7 +567,7 @@ def test_entrypoint_flow_downgrades_fixture_id_when_dynamic_producer_is_missing(
         if isinstance(item, dict) and item.get("variable") == "resourceId"
     ][0]
     assert missing["location"] == "target_url"
-    assert unresolved["literal_value"] == "2057302278429007873"
+    assert unresolved["literal_value"] == "9000000000000000001"
 
 
 def test_rule_based_api_generation_keeps_path_id_placeholder_for_dynamic_discovery() -> None:
@@ -582,7 +582,7 @@ def test_rule_based_api_generation_keeps_path_id_placeholder_for_dynamic_discove
 
             | 名称 | 值 | 说明 |
             | --- | --- | --- |
-            | `resourceId` | `2057302278429007873` | 固定资源 ID |
+            | `resourceId` | `9000000000000000001` | 固定资源 ID |
             """,
         }
     ]
@@ -1019,7 +1019,7 @@ def test_flow_diagnostics_marks_hardcoded_id_as_missing_upstream_step() -> None:
                 kind="api",
                 label="资源概览信息",
                 action="api_request",
-                target_url="/api/public/resources/2057302278429007873/overview",
+                target_url="/api/public/resources/9000000000000000001/overview",
                 data={
                     "method": "GET",
                     "expected_status": 200,
@@ -1047,7 +1047,7 @@ def test_flow_diagnostics_marks_hardcoded_id_as_missing_upstream_step() -> None:
     missing = data["missing_upstream_steps"][0]
 
     assert missing["variable"] == "resource_id"
-    assert missing["literal_value"] == "2057302278429007873"
+    assert missing["literal_value"] == "9000000000000000001"
     assert missing["candidate_routes"][0]["path"] == "/api/public/resources/search"
     assert annotated.code_context["api_flow_diagnostics"]["missing_upstream_step_count"] == 1
 
@@ -1143,7 +1143,7 @@ def test_case_generation_payload_requires_upstream_discovery_rules() -> None:
                 "content": """
                 | 名称 | 值 | 说明 |
                 | --- | --- | --- |
-                | `resourceId` | `2057302278429007873` | 固定资源 ID |
+                | `resourceId` | `9000000000000000001` | 固定资源 ID |
                 | 页面主标题 | `Alpha Demo Workflow` | 用户端展示 |
                 """,
             }
@@ -1163,7 +1163,7 @@ def test_case_generation_payload_requires_upstream_discovery_rules() -> None:
     assert payload["auth_context"]["effective_mode"] == "project_request_headers"
     assert payload["auth_context"]["likely_auth_header_keys"] == ["X-Customer-Token"]
     assert "login_route_candidates" not in payload["auth_context"]
-    assert payload["reference_fixtures"]["fixed_ids"]["resourceId"] == "2057302278429007873"
+    assert payload["reference_fixtures"]["fixed_ids"]["resourceId"] == "9000000000000000001"
     assert payload["reference_fixtures"]["entity_names"][0]["value"] == "Alpha Demo Workflow"
     assert any("项目请求头" in rule for rule in payload["auth_context_rules"])
     assert not any("login_flow" in rule for rule in payload["auth_context_rules"])

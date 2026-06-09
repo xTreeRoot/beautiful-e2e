@@ -93,6 +93,8 @@ HTTP 桥接不会自动操作 Codex 桌面界面。
 当 `AI_PROVIDER=codex_bridge` 或 `AI_PROVIDER=openai_compatible` 时，生成接口会优先用供应商 SSE 获取增量。
 后端会把供应商显式返回的 `reasoning_content`、reasoning summary 和输出文本转换成
 `provider_delta` 事件；如果当前供应商不返回思考增量，则只展示输出增量和平台阶段消息。
+HTTP 桥接会先压缩仓库摘要、引用文档和画布 DSL，尽量保留接口路径、方法、字段和变量链路证据；
+如果供应商返回上下文超限，会自动使用更严格预算重试一次。
 当 `AI_PROVIDER=codex_exec` 时，后端会调用 `codex exec --json` 并转发 Codex CLI 暴露的
 reasoning/content JSONL 事件；最终结构化 JSON 仍以 `--output-last-message` 文件为准。
 

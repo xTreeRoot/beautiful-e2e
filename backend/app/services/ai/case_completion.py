@@ -57,8 +57,11 @@ class CompletionCaseProvider(CaseGenerationProvider):
         client = self._client_for_context(context)
         try:
             raw = client.complete(system=system, prompt=json.dumps(payload, ensure_ascii=False))
-        except CaseGenerationError:
-            raise
+        except CaseGenerationError as exc:
+            retry_payload = self._build_retry_prompt_payload(context, exc, payload)
+            if retry_payload is None:
+                raise
+            raw = client.complete(system=system, prompt=json.dumps(retry_payload, ensure_ascii=False))
         except Exception as exc:
             raise CaseGenerationError(str(exc)) from exc
 
@@ -80,32 +83,51 @@ class CompletionCaseProvider(CaseGenerationProvider):
             yield {"type": "generated_case", "case": self.generate(context)}
             return
 
-        content_chunks: list[str] = []
-        final_text = ""
-        try:
-            for event in stream_complete(system=system, prompt=json.dumps(payload, ensure_ascii=False)):
-                event_type = str(event.get("type") or "")
-                if event_type == "provider_delta":
-                    delta = event.get("delta")
-                    channel = str(event.get("channel") or "content")
-                    if (
-                        isinstance(delta, str)
-                        and channel == "content"
-                        and event.get("collect") is not False
-                    ):
-                        content_chunks.append(delta)
+        retry_used = False
+        while True:
+            yield from self._payload_progress_events(payload)
+            content_chunks: list[str] = []
+            final_text = ""
+            try:
+                for event in stream_complete(system=system, prompt=json.dumps(payload, ensure_ascii=False)):
+                    event_type = str(event.get("type") or "")
+                    if event_type == "provider_delta":
+                        delta = event.get("delta")
+                        channel = str(event.get("channel") or "content")
+                        if (
+                            isinstance(delta, str)
+                            and channel == "content"
+                            and event.get("collect") is not False
+                        ):
+                            content_chunks.append(delta)
+                        yield {**event, "provider": self.name, "stage": "provider_stream"}
+                        continue
+                    if event_type == "provider_final":
+                        text = event.get("text")
+                        if isinstance(text, str):
+                            final_text = text
+                        continue
                     yield {**event, "provider": self.name, "stage": "provider_stream"}
-                    continue
-                if event_type == "provider_final":
-                    text = event.get("text")
-                    if isinstance(text, str):
-                        final_text = text
-                    continue
-                yield {**event, "provider": self.name, "stage": "provider_stream"}
-        except CaseGenerationError:
-            raise
-        except Exception as exc:
-            raise CaseGenerationError(str(exc)) from exc
+            except CaseGenerationError as exc:
+                retry_payload = (
+                    None
+                    if retry_used
+                    else self._build_retry_prompt_payload(context, exc, payload)
+                )
+                if retry_payload is None:
+                    raise
+                retry_used = True
+                yield {
+                    "type": "progress",
+                    "message": self._retry_progress_message(exc, payload, retry_payload),
+                    "stage": "provider_context_retry",
+                    "provider": self.name,
+                }
+                payload = retry_payload
+                continue
+            except Exception as exc:
+                raise CaseGenerationError(str(exc)) from exc
+            break
 
         raw = final_text or "".join(content_chunks)
         if not raw.strip():
@@ -134,6 +156,43 @@ class CompletionCaseProvider(CaseGenerationProvider):
         供应商侧压缩，同时保持路由层和解析逻辑不感知具体供应商差异。
         """
         return build_case_generation_payload(context)
+
+    def _build_retry_prompt_payload(
+        self,
+        context: CaseGenerationContext,
+        error: CaseGenerationError,
+        attempted_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """供应商可按错误类型返回更小的重试载荷。"""
+
+        return None
+
+    def _payload_progress_events(self, payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        compaction = payload.get("context_compaction")
+        if not isinstance(compaction, dict):
+            return
+        original = compaction.get("original_chars")
+        compacted = compaction.get("compacted_chars")
+        target = compaction.get("target_chars")
+        if not isinstance(original, int) or not isinstance(compacted, int):
+            return
+        yield {
+            "type": "progress",
+            "message": f"已压缩供应商上下文：{original} -> {compacted} 字符。",
+            "stage": "provider_context_compaction",
+            "provider": self.name,
+            "original_chars": original,
+            "compacted_chars": compacted,
+            "target_chars": target,
+        }
+
+    def _retry_progress_message(
+        self,
+        error: CaseGenerationError,
+        attempted_payload: dict[str, Any],
+        retry_payload: dict[str, Any],
+    ) -> str:
+        return "供应商提示上下文超限，已进一步压缩上下文并重试。"
 
     def _case_from_raw(self, context: CaseGenerationContext, raw: str) -> GeneratedCase:
         obj = parse_case_generation_json(raw, self.name)

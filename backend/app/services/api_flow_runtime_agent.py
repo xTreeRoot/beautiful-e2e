@@ -107,20 +107,31 @@ class ApiFlowRuntimeAgent:
         aliases = _variable_aliases(variable)
         for history in reversed(response_history):
             parsed = _json_from_preview(history.response_preview)
-            if parsed is None:
+            if parsed is not None:
+                found = _find_first_alias(parsed, aliases)
+                if found is not None:
+                    path, value = found
+                    return RuntimeVariableInference(
+                        variable=variable,
+                        value=value,
+                        confidence=0.9,
+                        source="deterministic_response_alias",
+                        source_step_label=history.label,
+                        source_json_path=path,
+                        reason="根据变量名和前序响应字段别名自动匹配。",
+                    )
+            text_found = _find_first_alias_in_text(history.response_preview, aliases)
+            if text_found is None:
                 continue
-            found = _find_first_alias(parsed, aliases)
-            if found is None:
-                continue
-            path, value = found
+            path, value = text_found
             return RuntimeVariableInference(
                 variable=variable,
                 value=value,
-                confidence=0.9,
+                confidence=0.82,
                 source="deterministic_response_alias",
                 source_step_label=history.label,
                 source_json_path=path,
-                reason="根据变量名和前序响应字段别名自动匹配。",
+                reason="前序响应预览不是完整 JSON，已按变量名字段从原始响应文本匹配。",
             )
         return None
 
@@ -152,7 +163,7 @@ class ApiFlowRuntimeAgent:
                 "value": "从 previous_responses 中找到的值；找不到返回 null",
                 "confidence": "0 到 1",
                 "source_step_label": "来源步骤 label|null",
-                "source_json_path": "来源 JSONPath|null",
+                "source_json_path": "来源 JSONPath|null；枚举对象必须指向 key/code/value/id 这类标量叶子",
                 "reason": "中文说明，必须指出来自哪条响应",
             },
         }
@@ -222,15 +233,28 @@ def _runtime_ai_client_from_settings(settings: Settings) -> RuntimeInferenceClie
 def _variable_aliases(variable: str) -> list[str]:
     normalized = _normalize_name(variable)
     parts = [part for part in re.split(r"[_\-.]+", normalized) if part]
-    aliases = {variable, normalized, _camel_case(parts)}
+    aliases = [variable, normalized, _camel_case(parts)]
     if parts:
-        aliases.add(parts[-1])
+        aliases.append(parts[-1])
     if parts and parts[-1] == "id":
-        aliases.add("id")
-        aliases.add(_camel_case(parts[-2:]))
+        aliases.extend([_camel_case(parts[-2:]), "id"])
     if "token" in parts:
-        aliases.update({"token", "accessToken", "saToken", "satoken", "Authorization"})
-    return [alias for alias in aliases if alias]
+        aliases.extend(["accessToken", "token", "saToken", "satoken", "Authorization"])
+    return _unique_aliases(aliases)
+
+
+def _unique_aliases(aliases: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for alias in aliases:
+        if not alias:
+            continue
+        key = alias.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(alias)
+    return result
 
 
 def _normalize_name(value: str) -> str:
@@ -267,7 +291,12 @@ def _find_first_alias(payload: Any, aliases: list[str], path: str = "$") -> tupl
         for alias in aliases:
             key = lowered.get(alias.lower())
             if key is not None:
-                return f"{path}.{key}" if path != "$" else f"$.{key}", payload[key]
+                matched_path = f"{path}.{key}" if path != "$" else f"$.{key}"
+                scalar_leaf = _preferred_object_scalar_leaf(payload[key])
+                if scalar_leaf is not None:
+                    leaf_key, leaf_value = scalar_leaf
+                    return f"{matched_path}.{leaf_key}", leaf_value
+                return matched_path, payload[key]
         for key, value in payload.items():
             found = _find_first_alias(value, aliases, f"{path}.{key}" if path != "$" else f"$.{key}")
             if found is not None:
@@ -278,6 +307,70 @@ def _find_first_alias(payload: Any, aliases: list[str], path: str = "$") -> tupl
             if found is not None:
                 return found
     return None
+
+
+def _preferred_object_scalar_leaf(value: Any) -> tuple[str, Any] | None:
+    """同名字段是枚举/选项对象时，优先返回可直接放入请求参数的稳定标量。
+
+    运行期变量通常用于 path、query、headers 或 body 字段；如果把整个
+    `{key,label,value}` 对象塞回请求体，后端 DTO 往往会绑定失败。
+    """
+
+    if not isinstance(value, dict):
+        return None
+
+    lowered = {str(key).lower(): key for key in value}
+    for preferred in ("key", "code", "value", "id"):
+        key = lowered.get(preferred)
+        if key is None:
+            continue
+        scalar = value.get(key)
+        if _is_non_null_scalar(scalar):
+            return str(key), scalar
+
+    scalar_entries = [
+        (str(key), item)
+        for key, item in value.items()
+        if _is_non_null_scalar(item)
+    ]
+    if len(scalar_entries) == 1:
+        return scalar_entries[0]
+    return None
+
+
+def _is_non_null_scalar(value: Any) -> bool:
+    return isinstance(value, str | int | float | bool)
+
+
+def _find_first_alias_in_text(text: str, aliases: list[str]) -> tuple[str, Any] | None:
+    """从被截断的 JSON 预览中按字段名提取基础值。
+
+    运行面板只保留响应预览，大分页响应尾部被截断时无法整体解析为 JSON；
+    这里只接受 JSON 对象字段的字符串、数字、布尔和 null，避免从任意文本里猜值。
+    """
+
+    if not text.strip():
+        return None
+    value_pattern = r'"((?:\\.|[^"\\])*)"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null'
+    for alias in aliases:
+        pattern = re.compile(
+            rf'"(?P<key>{re.escape(alias)})"\s*:\s*(?P<value>{value_pattern})',
+            re.IGNORECASE,
+        )
+        match = pattern.search(text)
+        if match is None:
+            continue
+        value = _parse_json_scalar(match.group("value"))
+        if value is not None:
+            return f"$..{match.group('key')}", value
+    return None
+
+
+def _parse_json_scalar(token: str) -> Any | None:
+    try:
+        return json.loads(token)
+    except json.JSONDecodeError:
+        return None
 
 
 def _float_confidence(value: Any) -> float:

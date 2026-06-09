@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import re
 from typing import Any
 
 CODEX_EXEC_PROMPT_TARGET_CHARS = 850_000
+HTTP_BRIDGE_PROMPT_TARGET_CHARS = 140_000
+HTTP_BRIDGE_RETRY_PROMPT_TARGET_CHARS = 48_000
 TRUNCATED_SUFFIX = "...[已截断]"
 
 
@@ -19,26 +22,85 @@ def compact_codex_exec_payload(
     Codex CLI 会在 turn/start 前校验完整 stdin 长度；压缩只裁剪高噪声仓库索引，
     保留路由路径、方法、字段名、认证画像和引用文档证据，避免失败后退回规则生成器。
     """
+    return _compact_generation_payload(
+        payload,
+        execution_mode=execution_mode,
+        target_chars=target_chars,
+        provider="codex_exec",
+        reason="codex exec stdin 有 1MB 左右硬上限，已压缩仓库索引中的大字段。",
+    )
+
+
+def compact_http_bridge_payload(
+    payload: dict[str, Any],
+    *,
+    execution_mode: str,
+    target_chars: int = HTTP_BRIDGE_PROMPT_TARGET_CHARS,
+    provider: str = "codex_bridge",
+    retry: bool = False,
+) -> dict[str, Any]:
+    """压缩 HTTP 桥接发送给模型的上下文。
+
+    HTTP 供应商不会在本地提前知道真实 token 窗口；这里使用偏保守的字符预算，
+    保留接口契约、引用文档摘要和变量链路证据，先剪掉高噪声索引，避免供应商返回
+    context_length_exceeded 后直接降级到规则生成器。
+    """
+
+    reason = (
+        "HTTP 供应商返回上下文超限，已使用更严格预算重试。"
+        if retry
+        else "HTTP 供应商上下文窗口有限，已预先压缩仓库索引和引用材料。"
+    )
+    return _compact_generation_payload(
+        payload,
+        execution_mode=execution_mode,
+        target_chars=target_chars,
+        provider=provider,
+        reason=reason,
+        retry=retry,
+    )
+
+
+def payload_json_chars(value: Any) -> int:
+    """返回供应商载荷的 JSON 字符数，供重试策略比较压缩幅度。"""
+
+    return _json_chars(value)
+
+
+def _compact_generation_payload(
+    payload: dict[str, Any],
+    *,
+    execution_mode: str,
+    target_chars: int,
+    provider: str,
+    reason: str,
+    retry: bool = False,
+) -> dict[str, Any]:
     if _json_chars(payload) <= target_chars:
         return payload
 
     compacted = deepcopy(payload)
     backend_api = execution_mode == "backend_api"
+    relevance_text = _payload_relevance_text(payload)
     compacted["frontend_repository_summary"] = _compact_repo_summary(
         compacted.get("frontend_repository_summary"),
         route_limit=40 if backend_api else 180,
         dom_target_limit=80 if backend_api else 180,
+        relevance_text=relevance_text,
     )
     compacted["backend_repository_summary"] = _compact_repo_summary(
         compacted.get("backend_repository_summary"),
         route_limit=360 if backend_api else 220,
         dom_target_limit=40 if backend_api else 120,
+        relevance_text=relevance_text,
     )
     compacted["project_context"] = _compact_project_context(compacted.get("project_context"))
     compacted["context_compaction"] = {
-        "provider": "codex_exec",
-        "reason": "codex exec stdin 有 1MB 左右硬上限，已压缩仓库索引中的大字段。",
+        "provider": provider,
+        "reason": reason,
         "original_chars": _json_chars(payload),
+        "target_chars": target_chars,
+        "retry": retry,
     }
 
     if _json_chars(compacted) > target_chars:
@@ -60,11 +122,13 @@ def compact_codex_exec_payload(
             compacted.get("backend_repository_summary"),
             route_limit=180,
             dom_target_limit=24,
+            relevance_text=relevance_text,
         )
         compacted["frontend_repository_summary"] = _compact_repo_summary(
             compacted.get("frontend_repository_summary"),
             route_limit=24,
             dom_target_limit=48,
+            relevance_text=relevance_text,
         )
 
     if _json_chars(compacted) > target_chars:
@@ -82,6 +146,48 @@ def compact_codex_exec_payload(
     while _json_chars(compacted) > target_chars and _halve_compacted_routes(compacted):
         continue
 
+    if _json_chars(compacted) > target_chars:
+        compacted["project_context"] = _bounded_value(
+            compacted.get("project_context"),
+            max_string_chars=180,
+            max_list_items=12,
+            max_object_items=32,
+        )
+        compacted["selected_agent"] = _bounded_value(
+            compacted.get("selected_agent"),
+            max_string_chars=180,
+            max_list_items=12,
+            max_object_items=24,
+        )
+        compacted["enabled_skills"] = _bounded_value(
+            compacted.get("enabled_skills"),
+            max_string_chars=180,
+            max_list_items=8,
+            max_object_items=24,
+        )
+        compacted["reference_documents"] = _compact_reference_documents(
+            compacted.get("reference_documents"),
+            max_content_chars=360,
+        )
+        compacted["backend_repository_summary"] = _compact_repo_summary(
+            compacted.get("backend_repository_summary"),
+            route_limit=48 if backend_api else 32,
+            dom_target_limit=8 if backend_api else 32,
+            relevance_text=relevance_text,
+        )
+        compacted["frontend_repository_summary"] = _compact_repo_summary(
+            compacted.get("frontend_repository_summary"),
+            route_limit=8 if backend_api else 32,
+            dom_target_limit=24 if backend_api else 48,
+            relevance_text=relevance_text,
+        )
+
+    while _json_chars(compacted) > target_chars and _halve_compacted_routes(
+        compacted,
+        min_limits={"backend_repository_summary": 8, "frontend_repository_summary": 4},
+    ):
+        continue
+
     compacted["context_compaction"]["compacted_chars"] = _json_chars(compacted)
     return compacted
 
@@ -91,11 +197,24 @@ def _compact_repo_summary(
     *,
     route_limit: int,
     dom_target_limit: int,
+    relevance_text: str = "",
 ) -> Any:
     if not isinstance(value, dict):
         return value
     routes = value.get("routes")
     dom_targets = value.get("dom_targets")
+    selected_routes = _prioritized_items(
+        routes,
+        route_limit,
+        relevance_text,
+        item_text=_route_relevance_text,
+    )
+    selected_dom_targets = _prioritized_items(
+        dom_targets,
+        dom_target_limit,
+        relevance_text,
+        item_text=_dom_target_relevance_text,
+    )
     compacted: dict[str, Any] = {
         "path": value.get("path"),
         "exists": value.get("exists"),
@@ -103,17 +222,17 @@ def _compact_repo_summary(
         "signals": _string_list(value.get("signals"), 32, 360),
         "routes": [
             _compact_route(route)
-            for route in routes[:route_limit]
+            for route in selected_routes
             if isinstance(route, dict)
         ]
-        if isinstance(routes, list)
+        if isinstance(selected_routes, list)
         else [],
         "dom_targets": [
             _compact_dom_target(target)
-            for target in dom_targets[:dom_target_limit]
+            for target in selected_dom_targets
             if isinstance(target, dict)
         ]
-        if isinstance(dom_targets, list)
+        if isinstance(selected_dom_targets, list)
         else [],
     }
     if isinstance(value.get("auth_profile"), dict):
@@ -442,10 +561,14 @@ def _compact_reference_documents(value: Any, *, max_content_chars: int) -> Any:
     return documents
 
 
-def _halve_compacted_routes(payload: dict[str, Any]) -> bool:
+def _halve_compacted_routes(
+    payload: dict[str, Any],
+    *,
+    min_limits: dict[str, int] | None = None,
+) -> bool:
     """预算仍超限时按仓库边界继续缩短路由列表。"""
     reduced = False
-    limits = {
+    limits = min_limits or {
         "backend_repository_summary": 24,
         "frontend_repository_summary": 8,
     }
@@ -494,6 +617,108 @@ def _schema_type(schema: Any) -> Any:
 
 def _object_keys(value: Any, limit: int) -> list[str]:
     return [str(key) for key in list(value)[:limit]] if isinstance(value, dict) else []
+
+
+def _payload_relevance_text(payload: dict[str, Any]) -> str:
+    """提取用于路由裁剪排序的本次需求文本。
+
+    这里只做通用关键词匹配，不沉淀任何被测业务词；引用文档内容限制长度，
+    防止排序辅助本身把大文档再次复制进内存热点。
+    """
+
+    parts: list[str] = []
+    for key in ("natural_language", "flow_entrypoint"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, dict):
+            parts.extend(str(item) for item in value.values() if isinstance(item, str))
+    fixtures = payload.get("reference_fixtures")
+    if isinstance(fixtures, dict):
+        parts.extend(str(item) for item in fixtures.values() if isinstance(item, (str, int, float)))
+        for value in fixtures.values():
+            if isinstance(value, list):
+                parts.extend(str(item) for item in value[:24])
+    documents = payload.get("reference_documents")
+    if isinstance(documents, list):
+        for document in documents[:6]:
+            if not isinstance(document, dict):
+                continue
+            for key in ("title", "path", "content"):
+                value = document.get(key)
+                if isinstance(value, str):
+                    parts.append(value[:4_000])
+    return "\n".join(parts)
+
+
+def _prioritized_items(
+    value: Any,
+    limit: int,
+    relevance_text: str,
+    *,
+    item_text: Any,
+) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    items = value[:]
+    if limit <= 0:
+        return []
+    terms = _relevance_terms(relevance_text)
+    if not terms:
+        return items[:limit]
+    scored = [
+        (_relevance_score(item_text(item), terms), index, item)
+        for index, item in enumerate(items)
+    ]
+    scored.sort(key=lambda entry: (-entry[0], entry[1]))
+    return [item for _, _, item in scored[:limit]]
+
+
+def _relevance_terms(text: str) -> set[str]:
+    lowered = text.lower()
+    terms = {item for item in re.findall(r"[a-z0-9_/-]{2,}", lowered)}
+    for segment in re.findall(r"[\u4e00-\u9fff]{2,}", lowered):
+        max_window = min(6, len(segment))
+        for size in range(2, max_window + 1):
+            terms.update(segment[index : index + size] for index in range(len(segment) - size + 1))
+    return {term for term in terms if len(term) >= 2}
+
+
+def _relevance_score(text: str, terms: set[str]) -> int:
+    lowered = text.lower()
+    return sum(1 for term in terms if term in lowered)
+
+
+def _route_relevance_text(route: Any) -> str:
+    if not isinstance(route, dict):
+        return ""
+    parts = [
+        route.get("method"),
+        route.get("path"),
+        route.get("summary"),
+        route.get("description"),
+        route.get("handler"),
+        route.get("source"),
+    ]
+    for key in ("tags", "parameters"):
+        value = route.get(key)
+        if isinstance(value, list):
+            parts.extend(json.dumps(item, ensure_ascii=False) for item in value[:16])
+    for key in ("request_body", "responses"):
+        value = route.get(key)
+        if isinstance(value, (dict, list)):
+            parts.append(json.dumps(value, ensure_ascii=False)[:4_000])
+    return "\n".join(str(item) for item in parts if item not in (None, "", [], {}))
+
+
+def _dom_target_relevance_text(target: Any) -> str:
+    if not isinstance(target, dict):
+        return ""
+    return "\n".join(
+        str(target.get(key))
+        for key in ("kind", "value", "source", "hint")
+        if target.get(key) not in (None, "")
+    )
 
 
 def _string_list(value: Any, limit: int, max_chars: int) -> list[str]:

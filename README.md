@@ -112,6 +112,9 @@ npm test
 `POST /api/projects/{project_id}/cases/generate/stream` 会额外返回 `provider_delta` 事件。
 该事件只转发供应商或 Codex CLI 显式返回的 `reasoning_content`、reasoning summary 或输出文本增量，
 前端生成过程弹窗会按“供应商思考”和“供应商输出”合并展示。
+`codex_bridge` 和 `openai_compatible` 会在发送前按 HTTP 模型上下文窗口预压缩仓库索引、
+引用文档和画布 DSL；如果供应商仍返回上下文超限，后端会用更严格预算自动重试一次，
+仍失败时才进入规则生成器兜底。
 
 生成成功时，用例会在 `code_context.generation_mode` 记录实际供应商，例如 `codex_bridge`。
 

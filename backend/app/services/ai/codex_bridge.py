@@ -5,12 +5,17 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import Settings
-from app.services.ai.base import CaseGenerationError
+from app.services.ai.base import CaseGenerationContext, CaseGenerationError
 from app.services.ai.case_completion import CompletionCaseProvider
 from app.services.ai.codex_http_bridge import (
     CodexHttpBridgeConfig,
     CodexHttpBridgeError,
     CodexProviderHttpBridge,
+)
+from app.services.ai.payload_compaction import (
+    HTTP_BRIDGE_RETRY_PROMPT_TARGET_CHARS,
+    compact_http_bridge_payload,
+    payload_json_chars,
 )
 
 
@@ -89,6 +94,34 @@ class CodexBridgeCaseProvider(CompletionCaseProvider):
             wire_api=wire_api,
         )
 
+    def _build_prompt_payload(self, context: CaseGenerationContext) -> dict[str, Any]:
+        payload = super()._build_prompt_payload(context)
+        return compact_http_bridge_payload(
+            payload,
+            execution_mode=context.execution_mode,
+            provider=self.name,
+        )
+
+    def _build_retry_prompt_payload(
+        self,
+        context: CaseGenerationContext,
+        error: CaseGenerationError,
+        attempted_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not _is_context_length_error(error):
+            return None
+        payload = super()._build_prompt_payload(context)
+        retry_payload = compact_http_bridge_payload(
+            payload,
+            execution_mode=context.execution_mode,
+            target_chars=HTTP_BRIDGE_RETRY_PROMPT_TARGET_CHARS,
+            provider=self.name,
+            retry=True,
+        )
+        if payload_json_chars(retry_payload) >= payload_json_chars(attempted_payload):
+            return None
+        return retry_payload
+
     @classmethod
     def from_settings(cls, settings: Settings) -> "CodexBridgeCaseProvider":
         config = settings.ai_provider_config or {}
@@ -142,6 +175,34 @@ class OpenAICompatibleCaseProvider(CompletionCaseProvider):
             wire_api=wire_api,
         )
 
+    def _build_prompt_payload(self, context: CaseGenerationContext) -> dict[str, Any]:
+        payload = super()._build_prompt_payload(context)
+        return compact_http_bridge_payload(
+            payload,
+            execution_mode=context.execution_mode,
+            provider=self.name,
+        )
+
+    def _build_retry_prompt_payload(
+        self,
+        context: CaseGenerationContext,
+        error: CaseGenerationError,
+        attempted_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not _is_context_length_error(error):
+            return None
+        payload = super()._build_prompt_payload(context)
+        retry_payload = compact_http_bridge_payload(
+            payload,
+            execution_mode=context.execution_mode,
+            target_chars=HTTP_BRIDGE_RETRY_PROMPT_TARGET_CHARS,
+            provider=self.name,
+            retry=True,
+        )
+        if payload_json_chars(retry_payload) >= payload_json_chars(attempted_payload):
+            return None
+        return retry_payload
+
     @classmethod
     def from_settings(cls, settings: Settings) -> "OpenAICompatibleCaseProvider":
         config = settings.ai_provider_config or {}
@@ -154,3 +215,20 @@ class OpenAICompatibleCaseProvider(CompletionCaseProvider):
             api_key=str(config.get("api_key") or settings.ai_api_key or "") or None,
             base_url=str(config.get("base_url") or settings.ai_base_url or "") or None,
         )
+
+
+def _is_context_length_error(error: CaseGenerationError) -> bool:
+    """识别常见 HTTP 供应商的上下文窗口超限错误文案。"""
+
+    text = str(error).lower()
+    return any(
+        marker in text
+        for marker in (
+            "context_length_exceeded",
+            "context window",
+            "context length",
+            "maximum context",
+            "token limit",
+            "too many tokens",
+        )
+    )

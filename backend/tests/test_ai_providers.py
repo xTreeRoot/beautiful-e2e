@@ -12,7 +12,8 @@ from app.api.system import ai_provider, update_ai_provider
 from app.core.config import Settings, get_settings
 from app.models import AiProviderConfig
 from app.schemas import AiProviderUpdate
-from app.services.ai.codex_bridge import CodexHttpCompletionClient
+from app.services.ai.base import CaseGenerationContext
+from app.services.ai.codex_bridge import CodexBridgeCaseProvider, CodexHttpCompletionClient
 from app.services.ai.codex_exec import (
     CodexExecCompletionClient,
     CodexExecConfig,
@@ -20,8 +21,12 @@ from app.services.ai.codex_exec import (
     codex_exec_event_to_provider_delta,
     resolve_codex_executable,
 )
-from app.services.ai.codex_http_bridge import CodexHttpBridgeConfig, CodexProviderHttpBridge
-from app.services.ai.payload_compaction import compact_codex_exec_payload
+from app.services.ai.codex_http_bridge import (
+    CodexHttpBridgeConfig,
+    CodexHttpBridgeError,
+    CodexProviderHttpBridge,
+)
+from app.services.ai.payload_compaction import compact_codex_exec_payload, compact_http_bridge_payload
 from app.services.ai.registry import available_provider_names, build_case_generation_provider
 from app.services.ai_settings import (
     AI_USAGE_API_RUNTIME,
@@ -29,6 +34,7 @@ from app.services.ai_settings import (
     AI_USAGE_PROJECT_ANALYSIS,
     settings_for_ai_usage,
 )
+from app.services.repo_reader import RepoSummary
 
 
 def test_codex_exec_client_reads_last_message_file(
@@ -242,6 +248,148 @@ def test_codex_exec_payload_compaction_keeps_route_contract_under_limit() -> Non
     assert compacted_route["path"] == "/api/pd/records/create"
     assert compacted_route["request_body"]["fields"][:2] == ["field_0", "field_1"]
     assert "properties" not in compacted_route["request_body"]
+
+
+def test_http_bridge_payload_compaction_keeps_relevant_route_under_limit() -> None:
+    route = {
+        "method": "POST",
+        "path": "/api/records/search",
+        "summary": "查询目标记录",
+        "handler": "searchRecords",
+        "source": "RecordController.java:42",
+        "request_body": {
+            "schema": {
+                "type": "object",
+                "properties": {
+                    f"field_{index}": {"type": "string", "description": "字段说明" * 80}
+                    for index in range(80)
+                },
+            },
+            "java_type": "RecordSearchRequest",
+        },
+    }
+    noisy_route = {
+        "method": "GET",
+        "path": "/api/noisy/items",
+        "summary": "无关列表",
+        "handler": "listNoisyItems",
+        "source": "NoisyController.java:12",
+        "description": "噪声说明" * 500,
+    }
+    payload = {
+        "natural_language": "从查询目标记录开始生成接口链路",
+        "execution_mode": "backend_api",
+        "frontend_repository_summary": {
+            "path": "/repo",
+            "exists": True,
+            "files": ["a.ts"] * 200,
+            "signals": [],
+            "routes": [noisy_route] * 160,
+            "dom_targets": [],
+        },
+        "backend_repository_summary": {
+            "path": "/repo",
+            "exists": True,
+            "files": ["a.java"] * 200,
+            "signals": [],
+            "routes": [noisy_route] * 160 + [route],
+            "dom_targets": [],
+        },
+        "project_context": {"repositories": [], "rules": []},
+        "current_canvas_dsl": {"nodes": [{"data": {"note": "x" * 1_000}}] * 80},
+        "reference_documents": [{"content": "查询目标记录" + "文档" * 8_000}],
+    }
+
+    compacted = compact_http_bridge_payload(
+        payload,
+        execution_mode="backend_api",
+        target_chars=38_000,
+    )
+    compacted_text = json.dumps(compacted, ensure_ascii=False)
+    backend_paths = [route["path"] for route in compacted["backend_repository_summary"]["routes"]]
+
+    assert len(compacted_text) <= 38_000
+    assert compacted["context_compaction"]["provider"] == "codex_bridge"
+    assert "/api/records/search" in backend_paths
+
+
+def test_codex_bridge_stream_retries_with_smaller_payload_on_context_limit(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_stream_complete(self, system, prompt):
+        calls.append(json.loads(prompt))
+        if len(calls) == 1:
+            raise CodexHttpBridgeError(
+                '{"error":{"code":"context_length_exceeded","message":"input too long"}}'
+            )
+        yield {
+            "type": "provider_final",
+            "text": json.dumps(
+                {
+                    "title": "查询记录",
+                    "description": "查询记录",
+                    "priority": "P1",
+                    "steps": [
+                        {
+                            "kind": "api",
+                            "label": "查询记录",
+                            "action": "api_request",
+                            "target_url": "/api/records/search",
+                            "data": {"method": "POST", "expected_status": 200, "body": {}},
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        }
+
+    monkeypatch.setattr(CodexProviderHttpBridge, "stream_complete", fake_stream_complete)
+    route = {
+        "method": "POST",
+        "path": "/api/records/search",
+        "summary": "查询记录",
+        "handler": "searchRecords",
+        "source": "RecordController.java:42",
+        "request_body": {
+            "schema": {
+                "type": "object",
+                "properties": {
+                    f"field_{index}": {"type": "string", "description": "字段说明" * 120}
+                    for index in range(100)
+                },
+            }
+        },
+    }
+    context = CaseGenerationContext(
+        prompt="从查询记录开始生成接口链路",
+        execution_mode="backend_api",
+        frontend=RepoSummary(path="/repo", exists=True, files=[], signals=[]),
+        backend=RepoSummary(
+            path="/repo",
+            exists=True,
+            files=["RecordController.java"] * 160,
+            signals=[],
+            routes=[route] * 220,
+        ),
+        reference_documents=[{"title": "执行单", "content": "查询记录" + "文档" * 12_000}],
+    )
+    provider = CodexBridgeCaseProvider(
+        model="demo-model",
+        api_key="secret",
+        base_url="https://vendor.example",
+    )
+
+    events = list(provider.stream_generate(context))
+
+    assert len(calls) == 2
+    assert calls[0]["context_compaction"]["provider"] == "codex_bridge"
+    assert calls[1]["context_compaction"]["retry"] is True
+    assert len(json.dumps(calls[1], ensure_ascii=False)) < len(
+        json.dumps(calls[0], ensure_ascii=False)
+    )
+    assert any(event.get("stage") == "provider_context_retry" for event in events)
+    assert events[-1]["type"] == "generated_case"
+    assert events[-1]["case"].steps[0].target_url == "/api/records/search"
 
 
 def test_codex_exec_nested_reasoning_event_is_forwarded() -> None:
