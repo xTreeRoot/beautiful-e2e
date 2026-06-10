@@ -168,12 +168,19 @@ select {
   display: grid;
   grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
   gap: 18px;
-  height: clamp(620px, calc(100vh - 118px), 930px);
+  height: 100%;
   min-height: 0;
 }
 
+.analysis-modal-root .ant-modal-wrap {
+  overflow: hidden;
+}
+
 .analysis-modal-shell.ant-modal {
-  max-width: calc(100vw - 24px);
+  top: 0;
+  height: 100dvh;
+  max-width: 100vw;
+  margin: 0;
   padding-bottom: 0;
 }
 
@@ -181,13 +188,20 @@ select {
 .analysis-modal-shell .ant-modal-content {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  max-height: calc(100vh - 24px);
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 0;
   overflow: hidden;
 }
 
 .analysis-modal-titlebar {
   width: 100%;
   padding-right: 42px;
+}
+
+.analysis-modal-titlebar .primary-button.ant-btn {
+  flex: 0 0 auto;
+  width: auto;
 }
 
 .analysis-modal-title {
@@ -197,7 +211,7 @@ select {
 .analysis-modal-shell .ant-modal-body {
   min-height: 0;
   overflow: hidden;
-  padding: 18px 28px 24px;
+  padding: 16px 18px 18px;
 }
 
 .analysis-records,
@@ -2330,6 +2344,20 @@ button.group-row {
     max-height: 460px;
   }
 
+  .analysis-modal-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(180px, 0.38fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .analysis-records {
+    min-height: 0;
+  }
+
+  .analysis-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
   .codex-exec-switch-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2411,6 +2439,24 @@ button.group-row {
   .node-editor-modal-shell .ant-modal-container {
     height: calc(100dvh - 24px);
     max-height: calc(100dvh - 24px);
+  }
+
+  .analysis-modal-shell .ant-modal-body {
+    padding: 12px;
+  }
+
+  .analysis-modal-titlebar {
+    gap: 10px !important;
+    padding-right: 34px;
+  }
+
+  .analysis-view-card {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .analysis-view-card .ant-tag {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .modal-form-row,

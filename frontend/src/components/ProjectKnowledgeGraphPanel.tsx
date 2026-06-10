@@ -1,5 +1,5 @@
 import { Alert, Button, Empty, Flex, Input, List, Segmented, Space, Spin, Tag, Tooltip, Typography } from 'antd';
-import { Ban, CheckCircle2, GitBranch, RefreshCw, Route, Save, ShieldCheck, Star, StarOff } from 'lucide-react';
+import { Ban, CheckCircle2, GitBranch, RefreshCw, Route, Save, Star, StarOff } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import type {
@@ -8,7 +8,7 @@ import type {
   KnowledgeGraphRoute,
   ProjectKnowledgeGraph
 } from '../types/projectKnowledgeGraph';
-import { KnowledgeGraphRouteSearch } from './KnowledgeGraphRouteSearch';
+import { ProjectKnowledgeGraphToolbar } from './ProjectKnowledgeGraphToolbar';
 import './projectKnowledgeGraph.css';
 
 const { Paragraph, Text, Title } = Typography;
@@ -107,44 +107,19 @@ export function ProjectKnowledgeGraphPanel({
 
   return (
     <div className="knowledge-graph-shell">
-      <Flex className="knowledge-graph-toolbar" align="center" justify="space-between" gap={12}>
-        <Space size={8} wrap>
-          <Tag color={isReviewed ? 'green' : 'gold'}>{isReviewed ? '已审核强事实' : '候选事实'}</Tag>
-          <Tag>{modules.length} 个模块</Tag>
-          <Tag>{relationships.length} 条关系</Tag>
-        </Space>
-        <Space size={8} wrap>
-          <Tooltip title="刷新图谱">
-            <Button
-              className="icon-button"
-              aria-label="刷新图谱"
-              icon={<RefreshCw size={16} />}
-              onClick={onReload}
-            />
-          </Tooltip>
-          <Button className="secondary-button" icon={<GitBranch size={16} />} loading={saving} onClick={onRebuild}>
-            重建候选
-          </Button>
-          <Button
-            type="primary"
-            className="primary-button"
-            icon={<ShieldCheck size={16} />}
-            loading={saving}
-            disabled={isReviewed}
-            onClick={onApprove}
-          >
-            批准图谱
-          </Button>
-        </Space>
-      </Flex>
-
-      {error ? <Alert className="knowledge-graph-alert" type="warning" showIcon message={error} /> : null}
-
-      <KnowledgeGraphRouteSearch
+      <ProjectKnowledgeGraphToolbar
         modules={modules}
+        relationshipCount={relationships.length}
+        isReviewed={isReviewed}
+        saving={saving}
         selectedModuleId={selectedModule?.id ?? null}
         onSelectModule={handleSelectModule}
+        onReload={onReload}
+        onRebuild={onRebuild}
+        onApprove={onApprove}
       />
+
+      {error ? <Alert className="knowledge-graph-alert" type="warning" showIcon message={error} /> : null}
 
       <div className="knowledge-graph-layout">
         <aside className="knowledge-graph-column" aria-label="模块树">

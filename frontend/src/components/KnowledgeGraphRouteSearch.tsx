@@ -12,12 +12,14 @@ import type { KnowledgeGraphModule } from '../types/projectKnowledgeGraph';
 const { Text } = Typography;
 
 type KnowledgeGraphRouteSearchProps = {
+  variant?: 'panel' | 'toolbar';
   modules: KnowledgeGraphModule[];
   selectedModuleId: string | null;
   onSelectModule: (moduleId: string) => void;
 };
 
 export function KnowledgeGraphRouteSearch({
+  variant = 'panel',
   modules,
   selectedModuleId,
   onSelectModule
@@ -32,17 +34,25 @@ export function KnowledgeGraphRouteSearch({
     [modules, query]
   );
   const hasQuery = query.trim().length > 0;
+  const isToolbar = variant === 'toolbar';
 
   return (
-    <section className="knowledge-route-search-panel" aria-label="相似接口搜索">
-      <Flex align="center" justify="space-between" gap={12} className="knowledge-route-search-head">
-        <Space size={8} wrap>
-          <Route size={16} aria-hidden="true" />
-          <Text className="field-label">相似接口搜索</Text>
-          <Tag>{routeCount} 个接口</Tag>
-        </Space>
-        {hasQuery ? <Tag color={results.length ? 'blue' : 'default'}>{results.length} 个候选</Tag> : null}
-      </Flex>
+    <section
+      className={isToolbar
+        ? 'knowledge-route-search-panel knowledge-route-search-panel--toolbar'
+        : 'knowledge-route-search-panel'}
+      aria-label="相似接口搜索"
+    >
+      {isToolbar ? null : (
+        <Flex align="center" justify="space-between" gap={12} className="knowledge-route-search-head">
+          <Space size={8} wrap>
+            <Route size={16} aria-hidden="true" />
+            <Text className="field-label">相似接口搜索</Text>
+            <Tag>{routeCount} 个接口</Tag>
+          </Space>
+          {hasQuery ? <Tag color={results.length ? 'blue' : 'default'}>{results.length} 个候选</Tag> : null}
+        </Flex>
+      )}
       <Input
         className="knowledge-route-search-input"
         allowClear

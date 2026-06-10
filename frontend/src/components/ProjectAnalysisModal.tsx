@@ -118,7 +118,7 @@ export function ProjectAnalysisModal({
   return (
     <Modal
       className="analysis-modal-shell"
-      centered
+      rootClassName="analysis-modal-root"
       title={
         <Flex align="center" justify="space-between" gap={16} className="analysis-modal-titlebar">
           <Flex align="center" gap={10} className="analysis-modal-title">
@@ -138,7 +138,7 @@ export function ProjectAnalysisModal({
       }
       open={open}
       onCancel={onClose}
-      width={1800}
+      width="100vw"
       footer={null}
     >
       <div className="analysis-modal-layout">
