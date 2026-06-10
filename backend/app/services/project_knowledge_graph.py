@@ -16,9 +16,14 @@ REVIEW_STATUS_DRAFT = "draft"
 REVIEW_STATUS_REVIEWED = "reviewed"
 REVIEW_STATUS_REJECTED = "rejected"
 REVIEW_STATUS_VALUES = {REVIEW_STATUS_DRAFT, REVIEW_STATUS_REVIEWED}
-MAX_GRAPH_MODULES = 32
-MAX_GRAPH_ROUTES_PER_MODULE = 24
-MAX_GRAPH_RELATIONSHIPS = 120
+MAX_GRAPH_MODULES = 128
+MAX_GRAPH_ROUTES_PER_MODULE = 48
+MAX_GRAPH_RELATIONSHIPS = 400
+REPOSITORY_KIND_PRIORITY = {
+    "backend": 0,
+    "frontend": 1,
+    "workspace": 2,
+}
 
 
 def upsert_candidate_knowledge_graph(
@@ -72,8 +77,8 @@ def build_candidate_knowledge_graph(
 ) -> dict[str, Any]:
     """把仓库级 route analysis 归并为项目级候选事实图谱。"""
 
-    modules: list[dict[str, Any]] = []
-    relationships: list[dict[str, Any]] = []
+    raw_modules: list[dict[str, Any]] = []
+    raw_relationships: list[dict[str, Any]] = []
     route_count = 0
     for repository in repositories:
         summary = repository.index_summary if isinstance(repository.index_summary, dict) else {}
@@ -81,16 +86,29 @@ def build_candidate_knowledge_graph(
         route_count += len(routes)
         analysis = summary.get("analysis") if isinstance(summary.get("analysis"), dict) else {}
         for module in _analysis_list(analysis.get("modules")):
-            modules.append(_knowledge_module(repository, module))
+            raw_modules.append(_knowledge_module(repository, module))
         for relationship in _analysis_list(analysis.get("relationships")):
-            relationships.append(_knowledge_relationship(repository, relationship))
+            raw_relationships.append(_knowledge_relationship(repository, relationship))
 
+    modules, module_id_map, route_id_map = _merge_duplicate_modules(raw_modules)
+    relationships = _dedupe_relationships(
+        [
+            _remap_relationship(relationship, module_id_map, route_id_map)
+            for relationship in raw_relationships
+        ]
+    )
     modules = modules[:MAX_GRAPH_MODULES]
+    visible_module_ids = {str(module.get("id")) for module in modules}
     relationships = sorted(
-        relationships[:MAX_GRAPH_RELATIONSHIPS],
+        [
+            relationship
+            for relationship in relationships
+            if relationship.get("from_module") in visible_module_ids
+            and relationship.get("to_module") in visible_module_ids
+        ],
         key=lambda item: float(item.get("confidence") or 0),
         reverse=True,
-    )
+    )[:MAX_GRAPH_RELATIONSHIPS]
     return with_review_status(
         {
             "version": PROJECT_KNOWLEDGE_GRAPH_VERSION,
@@ -244,6 +262,7 @@ def _knowledge_module(repository: Repository, module: dict[str, Any]) -> dict[st
         ],
         "routes": route_items,
         "scope_boundary": module.get("scope_boundary"),
+        "related_domains": _string_list(module.get("related_domains"), limit=24),
         "evidence": _string_list(module.get("evidence"), limit=10),
     }
 
@@ -270,6 +289,7 @@ def _knowledge_route(
         "role": route.get("role") or "request",
         "produces": _string_list(route.get("produces"), limit=12),
         "consumes": _string_list(route.get("consumes"), limit=12),
+        "related_domains": _string_list(route.get("related_domains"), limit=12),
         "request_body_fields": _string_list(route.get("request_body_fields"), limit=16),
         "applicable_scenarios": _applicable_scenarios(route),
         "excluded_scenarios": list(dict.fromkeys(excluded_scenarios)),
@@ -300,6 +320,219 @@ def _knowledge_relationship(
         if relationship.get("confirmed")
         else REVIEW_STATUS_DRAFT,
     }
+
+
+def _merge_duplicate_modules(
+    modules: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]:
+    """合并工作区和子仓库重复扫描出的同一模块。
+
+    项目分析会同时保存 workspace、frontend、backend 三类仓库摘要。workspace
+    覆盖子目录时，同一批后端路由会被重复归纳成模块。这里只合并同源模块且路由重叠
+    的候选，避免把不同微服务里名字相同但接口不同的模块误合并。
+    """
+
+    merged: list[dict[str, Any]] = []
+    module_id_map: dict[str, str] = {}
+    route_id_map: dict[str, str] = {}
+
+    for module in sorted(modules, key=_module_preference_key):
+        module_id = str(module.get("id") or "")
+        duplicate = _find_duplicate_module(merged, module)
+        if duplicate is None:
+            next_module = dict(module)
+            next_module["routes"] = []
+            next_module["entrypoint_route_ids"] = []
+            _merge_module_payload(next_module, module, route_id_map)
+            merged.append(next_module)
+            if module_id:
+                module_id_map[module_id] = str(next_module.get("id") or module_id)
+            continue
+
+        if module_id:
+            module_id_map[module_id] = str(duplicate.get("id") or module_id)
+        _merge_module_payload(duplicate, module, route_id_map)
+
+    for module in merged:
+        routes = _analysis_list(module.get("routes"))
+        module["routes"] = routes[:MAX_GRAPH_ROUTES_PER_MODULE]
+        module["route_count"] = max(int(module.get("route_count") or 0), len(routes))
+    return merged, module_id_map, route_id_map
+
+
+def _module_preference_key(module: dict[str, Any]) -> tuple[int, str, str]:
+    return (
+        REPOSITORY_KIND_PRIORITY.get(str(module.get("repository_kind") or ""), 9),
+        str(module.get("name") or ""),
+        str(module.get("id") or ""),
+    )
+
+
+def _find_duplicate_module(
+    modules: list[dict[str, Any]],
+    candidate: dict[str, Any],
+) -> dict[str, Any] | None:
+    candidate_key = _module_dedupe_key(candidate)
+    candidate_routes = _module_route_keys(candidate)
+    for module in modules:
+        if _module_dedupe_key(module) != candidate_key:
+            continue
+        module_routes = _module_route_keys(module)
+        if not candidate_routes or not module_routes or candidate_routes & module_routes:
+            return module
+    return None
+
+
+def _module_dedupe_key(module: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(module.get("source_module_id") or ""),
+        str(module.get("name") or ""),
+        str(module.get("domain") or ""),
+    )
+
+
+def _module_route_keys(module: dict[str, Any]) -> set[tuple[str, str]]:
+    return {
+        _route_key(route)
+        for route in _analysis_list(module.get("routes"))
+        if route.get("path")
+    }
+
+
+def _merge_module_payload(
+    target: dict[str, Any],
+    incoming: dict[str, Any],
+    route_id_map: dict[str, str],
+) -> None:
+    target_routes = _analysis_list(target.get("routes"))
+    routes_by_key = {_route_key(route): route for route in target_routes}
+    entrypoint_ids = set(_string_list(target.get("entrypoint_route_ids"), limit=MAX_GRAPH_ROUTES_PER_MODULE * 2))
+
+    for route in _analysis_list(incoming.get("routes")):
+        route_id = str(route.get("id") or "")
+        route_key = _route_key(route)
+        existing = routes_by_key.get(route_key)
+        if existing is not None:
+            existing_id = str(existing.get("id") or route_id)
+            if route_id:
+                route_id_map[route_id] = existing_id
+            _merge_route_payload(existing, route)
+            continue
+        next_route = dict(route)
+        target_routes.append(next_route)
+        routes_by_key[route_key] = next_route
+        if route_id:
+            route_id_map[route_id] = route_id
+
+    for route_id in _string_list(incoming.get("entrypoint_route_ids"), limit=MAX_GRAPH_ROUTES_PER_MODULE * 2):
+        entrypoint_ids.add(route_id_map.get(route_id, route_id))
+
+    target["routes"] = target_routes
+    target["entrypoint_route_ids"] = list(dict.fromkeys(entrypoint_ids))
+    target["evidence"] = _merge_string_values(target.get("evidence"), incoming.get("evidence"), limit=16)
+    target["related_domains"] = _merge_string_values(
+        target.get("related_domains"),
+        incoming.get("related_domains"),
+        limit=32,
+    )
+    target["repository_kinds"] = _merge_string_values(
+        target.get("repository_kinds")
+        or ([target.get("repository_kind")] if target.get("repository_kind") else []),
+        incoming.get("repository_kinds")
+        or ([incoming.get("repository_kind")] if incoming.get("repository_kind") else []),
+        limit=8,
+    )
+    target["route_count"] = max(
+        int(target.get("route_count") or 0),
+        int(incoming.get("route_count") or 0),
+        len(target_routes),
+    )
+
+
+def _merge_route_payload(target: dict[str, Any], incoming: dict[str, Any]) -> None:
+    for key in [
+        "produces",
+        "consumes",
+        "related_domains",
+        "request_body_fields",
+        "applicable_scenarios",
+        "excluded_scenarios",
+        "evidence",
+    ]:
+        target[key] = _merge_string_values(target.get(key), incoming.get(key), limit=16)
+    for key in ["summary", "handler", "source", "source_file", "source_line", "role"]:
+        if not target.get(key) and incoming.get(key):
+            target[key] = incoming[key]
+
+
+def _route_key(route: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(route.get("method") or "GET").upper(),
+        str(route.get("path") or ""),
+    )
+
+
+def _remap_relationship(
+    relationship: dict[str, Any],
+    module_id_map: dict[str, str],
+    route_id_map: dict[str, str],
+) -> dict[str, Any]:
+    next_relationship = dict(relationship)
+    from_module = str(next_relationship.get("from_module") or "")
+    to_module = str(next_relationship.get("to_module") or "")
+    next_relationship["from_module"] = module_id_map.get(from_module, from_module)
+    next_relationship["to_module"] = module_id_map.get(to_module, to_module)
+    next_relationship["from_route"] = _remap_route_ref(next_relationship.get("from_route"), route_id_map)
+    next_relationship["to_route"] = _remap_route_ref(next_relationship.get("to_route"), route_id_map)
+    return next_relationship
+
+
+def _remap_route_ref(value: Any, route_id_map: dict[str, str]) -> dict[str, Any]:
+    route = dict(value) if isinstance(value, dict) else {}
+    route_id = str(route.get("id") or "")
+    if route_id in route_id_map:
+        route["id"] = route_id_map[route_id]
+    return route
+
+
+def _dedupe_relationships(relationships: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged_by_key: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
+    for relationship in relationships:
+        key = _relationship_dedupe_key(relationship)
+        existing = merged_by_key.get(key)
+        if existing is None:
+            next_relationship = dict(relationship)
+            next_relationship["id"] = _merged_relationship_id(key)
+            merged_by_key[key] = next_relationship
+            continue
+        existing["confidence"] = max(
+            float(existing.get("confidence") or 0),
+            float(relationship.get("confidence") or 0),
+        )
+        existing["confirmed"] = bool(existing.get("confirmed")) or bool(relationship.get("confirmed"))
+        existing["evidence"] = _merge_string_values(existing.get("evidence"), relationship.get("evidence"), limit=12)
+        if not existing.get("reason") and relationship.get("reason"):
+            existing["reason"] = relationship["reason"]
+    return list(merged_by_key.values())
+
+
+def _relationship_dedupe_key(
+    relationship: dict[str, Any],
+) -> tuple[str, str, str, str, str, str]:
+    from_route = relationship.get("from_route") if isinstance(relationship.get("from_route"), dict) else {}
+    to_route = relationship.get("to_route") if isinstance(relationship.get("to_route"), dict) else {}
+    return (
+        str(relationship.get("type") or "variable_flow"),
+        str(relationship.get("variable") or ""),
+        str(from_route.get("method") or "GET").upper(),
+        str(from_route.get("path") or ""),
+        str(to_route.get("method") or "GET").upper(),
+        str(to_route.get("path") or ""),
+    )
+
+
+def _merged_relationship_id(key: tuple[str, str, str, str, str, str]) -> str:
+    return f"rel_{sha1(':'.join(key).encode('utf-8')).hexdigest()[:12]}"
 
 
 def _route_ref(repository_kind: str, route: dict[str, Any]) -> dict[str, Any]:
@@ -351,7 +584,20 @@ def _analysis_list(value: Any) -> list[dict[str, Any]]:
 def _string_list(value: Any, *, limit: int) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(item).strip() for item in value[:limit] if str(item).strip()]
+    values: list[str] = []
+    for item in value[:limit]:
+        text = str(item).strip()
+        if text and text != "None":
+            values.append(text)
+    return values
+
+
+def _merge_string_values(left: Any, right: Any, *, limit: int) -> list[str]:
+    values = [
+        *_string_list(left, limit=limit),
+        *_string_list(right, limit=limit),
+    ]
+    return list(dict.fromkeys(values))[:limit]
 
 
 def _module_id(repository: Repository, module: dict[str, Any]) -> str:

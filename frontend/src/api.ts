@@ -121,8 +121,16 @@ export type ProjectAnalysisStreamEvent = {
   repository_kind?: string;
   repository_count?: number;
   file_count?: number;
+  scanned_file_count?: number;
   route_count?: number;
+  discovered_route_count?: number;
   dom_target_count?: number;
+  discovered_dom_target_count?: number;
+  scan_group_count?: number;
+  scan_truncated?: boolean;
+  files_truncated?: boolean;
+  routes_truncated?: boolean;
+  dom_targets_truncated?: boolean;
   auth_mode?: string;
   [key: string]: unknown;
 };

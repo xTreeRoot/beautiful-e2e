@@ -21,6 +21,7 @@ from app.services.generation_context import build_generation_context
 from app.services.prompt_references import PromptReferenceReader
 from app.services.project_analyzer import ProjectAnalyzer
 from app.services.project_knowledge_graph import with_review_status
+from app.services.project_route_analysis import build_project_route_analysis
 from app.services.project_llm_context import build_project_llm_context
 from app.services.repo_reader import RepoReader, RepoSummary
 
@@ -54,6 +55,201 @@ def test_repo_reader_extracts_spring_routes_with_source_evidence(tmp_path) -> No
             "source": "src/main/java/demo/WorkflowController.java:6",
         }
     ]
+
+
+def test_repo_reader_combines_spring_class_and_method_mapping(tmp_path) -> None:
+    controller = tmp_path / "src/main/java/demo/EntityController.java"
+    controller.parent.mkdir(parents=True)
+    controller.write_text(
+        """
+        package demo;
+
+        @RequestMapping("/api/pb/entities")
+        public class EntityController {
+            @Operation(summary = "实体分页")
+            @PostMapping(path = "/page")
+            public void page() {}
+
+            @Operation(summary = "实体详情")
+            @GetMapping("/{id}/detail")
+            public void detail() {}
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    summary = RepoReader().summarize(str(tmp_path))
+
+    assert [route["path"] for route in summary.routes] == [
+        "/api/pb/entities/page",
+        "/api/pb/entities/{id}/detail",
+    ]
+    assert [route["method"] for route in summary.routes] == ["POST", "GET"]
+    assert summary.scan is not None
+    assert summary.scan["scanned_file_count"] == 1
+
+
+def test_repo_reader_balances_route_scan_across_top_level_modules(tmp_path) -> None:
+    for module in ["module_alpha", "module_beta", "module_gamma"]:
+        module_root = tmp_path / "service_root" / module
+        module_root.mkdir(parents=True)
+        (module_root / "pom.xml").write_text("<project />", encoding="utf-8")
+        source_dir = module_root / "src/main/java/demo"
+        source_dir.mkdir(parents=True)
+        for index in range(8):
+            (source_dir / f"A{index:02d}Config.java").write_text(
+                "package demo; public class Config {}",
+                encoding="utf-8",
+            )
+        class_name = "".join(part.title() for part in module.split("_"))
+        (source_dir / f"Z{class_name}Controller.java").write_text(
+            f"""
+            package demo;
+
+            public class Z{class_name}Controller {{
+                @PostMapping("/api/{module}/page")
+                public void page() {{}}
+            }}
+            """,
+            encoding="utf-8",
+        )
+
+    summary = RepoReader(max_files=3, max_routes=10, max_scan_files=3).summarize(str(tmp_path))
+
+    assert {route["path"] for route in summary.routes} == {
+        "/api/module_alpha/page",
+        "/api/module_beta/page",
+        "/api/module_gamma/page",
+    }
+    assert summary.scan is not None
+    assert summary.scan["scan_truncated"] is False
+    assert summary.scan["scan_group_count"] == 3
+
+
+def test_repo_reader_selects_routes_fairly_when_route_summary_is_capped(tmp_path) -> None:
+    module_names = [f"module_{index}" for index in range(6)]
+    for module in module_names:
+        module_root = tmp_path / "service_root" / module
+        module_root.mkdir(parents=True)
+        (module_root / "pom.xml").write_text("<project />", encoding="utf-8")
+        controller = module_root / "src/main/java/demo/EntityController.java"
+        controller.parent.mkdir(parents=True)
+        controller.write_text(
+            "\n".join(
+                [
+                    "package demo;",
+                    "public class EntityController {",
+                    *[
+                        f'    @PostMapping("/api/{module}/action_{index}")\n'
+                        f"    public void action{index}() {{}}"
+                        for index in range(3)
+                    ],
+                    "}",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    summary = RepoReader(max_files=6, max_routes=6, max_scan_files=2).summarize(str(tmp_path))
+
+    assert {route["path"].split("/")[2] for route in summary.routes} == set(module_names)
+    assert summary.scan is not None
+    assert summary.scan["discovered_route_count"] == 18
+    assert summary.scan["route_count"] == 6
+    assert summary.scan["routes_truncated"] is True
+
+
+def test_project_route_analysis_keeps_large_module_catalog() -> None:
+    routes = [
+        {
+            "method": "POST",
+            "path": f"/api/module_{index}/page",
+            "summary": f"实体{index}分页",
+            "handler": f"page{index}",
+            "source": f"src/Module{index}Controller.java:1",
+        }
+        for index in range(40)
+    ]
+
+    analysis = build_project_route_analysis(
+        "backend",
+        RepoSummary(path="/repo", exists=True, files=[], signals=[], routes=routes),
+    )
+
+    assert len(analysis["modules"]) == 40
+
+
+def test_project_route_analysis_uses_primary_segment_for_nested_paths() -> None:
+    routes = [
+        {
+            "method": "POST",
+            "path": "/api/public/entity/phase/page",
+            "summary": "实体阶段分页",
+            "source": "EntityController.java:1",
+        },
+        {
+            "method": "POST",
+            "path": "/api/public/entity/guard/profile",
+            "summary": "实体守卫档案",
+            "source": "EntityController.java:8",
+        },
+        {
+            "method": "POST",
+            "path": "/api/public/entity/archive/review",
+            "summary": "实体归档复核",
+            "source": "EntityController.java:16",
+        },
+    ]
+
+    analysis = build_project_route_analysis(
+        "backend",
+        RepoSummary(path="/repo", exists=True, files=[], signals=[], routes=routes),
+    )
+
+    modules = {module["id"]: module for module in analysis["modules"]}
+    entity_module = modules["module_entity"]
+
+    assert list(modules) == ["module_entity"]
+    assert entity_module["name"] == "entity 模块"
+    assert entity_module["related_domains"] == ["phase", "guard", "profile", "archive", "review"]
+    assert "不能单独拆成模块" in entity_module["scope_boundary"]
+    assert all("/" not in module["name"].removesuffix(" 模块") for module in analysis["modules"])
+
+
+def test_project_route_analysis_links_nested_path_to_existing_module() -> None:
+    routes = [
+        {
+            "method": "POST",
+            "path": "/api/public/entity/guard/profile",
+            "summary": "实体守卫档案",
+            "source": "EntityController.java:1",
+        },
+        {
+            "method": "POST",
+            "path": "/api/public/profile/page",
+            "summary": "档案分页",
+            "source": "ProfileController.java:1",
+        },
+    ]
+
+    analysis = build_project_route_analysis(
+        "backend",
+        RepoSummary(path="/repo", exists=True, files=[], signals=[], routes=routes),
+    )
+
+    modules = {module["id"]: module for module in analysis["modules"]}
+    reference = next(
+        relationship
+        for relationship in analysis["relationships"]
+        if relationship["type"] == "module_reference"
+    )
+
+    assert set(modules) == {"module_entity", "module_profile"}
+    assert modules["module_entity"]["related_domains"] == ["guard", "profile"]
+    assert reference["from_module"] == "module_entity"
+    assert reference["to_module"] == "module_profile"
+    assert reference["variable"] == "profile"
+    assert reference["to_route"]["path"] == "/api/public/profile/page"
 
 
 def test_repo_reader_extracts_multiline_operation_summary(tmp_path) -> None:
@@ -1417,6 +1613,8 @@ def test_project_analyzer_persists_repository_index_summary(tmp_path, mysql_engi
         }
 
     assert repositories["backend"].index_summary["routes"][0]["path"] == "/api/public/resources/{id}/detail"
+    assert repositories["backend"].index_summary["scan"]["scanned_file_count"] >= 1
+    assert repositories["backend"].index_summary["analysis"]["scan"]["indexed_file_count"] >= 1
     assert repositories["frontend"].index_summary["dom_targets"][0]["value"] == "submit-form"
 
 
@@ -1486,14 +1684,11 @@ def test_project_analyzer_groups_routes_and_relationships_with_code_evidence(
     analysis = repository.index_summary["analysis"]
     graph = knowledge_graph.graph
     modules = {module["id"]: module for module in analysis["modules"]}
+    graph_source_module_ids = [module["source_module_id"] for module in graph["modules"]]
     graph_modules = {module["source_module_id"]: module for module in graph["modules"]}
     resource_routes = {
         route["path"]: route
         for route in modules["module_resources"]["routes"]
-    }
-    special_scope_routes = {
-        route["path"]: route
-        for route in modules["module_resources_special"]["routes"]
     }
     resource_relationship = next(
         relationship
@@ -1506,15 +1701,20 @@ def test_project_analyzer_groups_routes_and_relationships_with_code_evidence(
 
     assert resource_routes["/api/pb/resources/page"]["role"] == "discovery"
     assert resource_routes["/api/pb/resources/page"]["produces"] == ["resourceId"]
-    assert "/api/pb/resources/special/page" in special_scope_routes
-    assert "只有提示词、文档或人工审核命中这些子域词" in modules["module_resources_special"]["scope_boundary"]
+    assert "/api/pb/resources/special/page" in resource_routes
+    assert modules["module_resources"]["related_domains"] == ["special"]
+    assert "不能单独拆成模块" in modules["module_resources"]["scope_boundary"]
     assert resource_relationship["from_module"] == "module_resources"
-    assert resource_relationship["to_module"] == "module_workflows_resources"
+    assert resource_relationship["to_module"] == "module_workflows"
     assert resource_relationship["confirmed"] is False
     assert "source=" in resource_relationship["evidence"][0]
     assert knowledge_graph.review_status == "draft"
     assert graph["review"]["fact_strength"] == "candidate"
-    assert graph_modules["module_resources_special"]["routes"][0]["excluded_scenarios"]
+    assert graph_source_module_ids.count("module_resources") == 1
+    assert "module_resources_special" not in graph_source_module_ids
+    assert graph_modules["module_resources"]["repository_kinds"] == ["backend", "workspace"]
+    assert graph_modules["module_resources"]["related_domains"] == ["special"]
+    assert graph_modules["module_resources"]["routes"][0]["excluded_scenarios"]
     assert project_context["repositories"][0]["analysis"]["modules"]
     assert project_context["knowledge_graph"] is None
 

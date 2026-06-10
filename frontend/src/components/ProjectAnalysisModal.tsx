@@ -26,6 +26,25 @@ type IndexSummary = {
   signals?: string[];
   files?: string[];
   exists?: boolean;
+  scan?: ScanSummary;
+};
+
+type ScanSummary = {
+  scanned_file_count?: number;
+  indexed_file_count?: number;
+  route_count?: number;
+  discovered_route_count?: number;
+  dom_target_count?: number;
+  discovered_dom_target_count?: number;
+  scan_group_count?: number;
+  max_indexed_files?: number;
+  max_routes?: number;
+  max_dom_targets?: number;
+  max_scan_files?: number;
+  files_truncated?: boolean;
+  routes_truncated?: boolean;
+  dom_targets_truncated?: boolean;
+  scan_truncated?: boolean;
 };
 
 type RouteParameter = {
@@ -218,6 +237,7 @@ function AnalysisDetailContent({
     () => Array.from(new Set(summaries.flatMap((summary) => summary.files ?? []))),
     [summaries]
   );
+  const scanOverview = useMemo(() => scanOverviewForSummaries(summaries), [summaries]);
   const filteredRoutes = useMemo(
     () => filterRoutes(routes, routeSearch),
     [routes, routeSearch]
@@ -311,9 +331,20 @@ function AnalysisDetailContent({
       <Metric label="DOM 目标" value={domTargets.length} />
       <Metric label="扫描文件" value={files.length} />
       <Metric label="分析状态" value={analysisStatusForSummaries(summaries)} />
+      <Metric label="扫描覆盖" value={scanOverview.status} />
+      <Metric label="遍历文件" value={scanOverview.fileLabel} />
       <div className="analysis-overview-wide">
         <Text className="field-label">最近分析</Text>
         <Text>{formatLatestAnalyzedAt(summaries)}</Text>
+      </div>
+      <div className="analysis-overview-wide">
+        <Text className="field-label">扫描说明</Text>
+        <Text>{scanOverview.description}</Text>
+        {scanOverview.flags.length ? (
+          <div className="analysis-signal-list">
+            {scanOverview.flags.map((flag) => <Tag key={flag}>{flag}</Tag>)}
+          </div>
+        ) : null}
       </div>
       <div className="analysis-overview-wide">
         <Text className="field-label">关键信号</Text>
@@ -388,6 +419,58 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 
 function indexSummary(repository: Repository): IndexSummary {
   return (repository.index_summary ?? {}) as IndexSummary;
+}
+
+function scanOverviewForSummaries(summaries: IndexSummary[]): {
+  status: string;
+  fileLabel: string;
+  description: string;
+  flags: string[];
+} {
+  const scans = summaries
+    .map((summary) => summary.scan)
+    .filter((scan): scan is ScanSummary => Boolean(scan && typeof scan === 'object'));
+  if (!scans.length) {
+    return {
+      status: '暂无记录',
+      fileLabel: '0',
+      description: '旧分析记录未包含扫描覆盖率，请重新分析项目后查看。',
+      flags: []
+    };
+  }
+
+  const scannedFiles = sumScanValue(scans, 'scanned_file_count');
+  const indexedFiles = sumScanValue(scans, 'indexed_file_count');
+  const discoveredRoutes = sumScanValue(scans, 'discovered_route_count');
+  const indexedRoutes = sumScanValue(scans, 'route_count');
+  const scanGroups = sumScanValue(scans, 'scan_group_count');
+  const flags = scanFlags(scans);
+  const reachedLimit = flags.length > 0;
+  return {
+    status: reachedLimit ? '可能截断' : '未触达上限',
+    fileLabel: `${scannedFiles} / ${indexedFiles}`,
+    description: reachedLimit
+      ? `已按 ${scanGroups} 个扫描分组公平保留 ${indexedRoutes} / ${discoveredRoutes} 条接口，图谱是候选摘要。`
+      : `已按 ${scanGroups} 个扫描分组完成接口发现，覆盖范围仍限定在源码、接口契约和前端目标文件。`,
+    flags
+  };
+}
+
+function sumScanValue(scans: ScanSummary[], key: keyof ScanSummary): number {
+  return scans.reduce((total, scan) => total + numericScanValue(scan[key]), 0);
+}
+
+function numericScanValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function scanFlags(scans: ScanSummary[]): string[] {
+  const flags: string[] = [];
+  if (scans.some((scan) => scan.scan_truncated)) flags.push('遍历文件触达上限');
+  if (scans.some((scan) => scan.files_truncated)) flags.push('文件摘要已截断');
+  if (scans.some((scan) => scan.routes_truncated)) flags.push('接口路由已截断');
+  if (scans.some((scan) => scan.dom_targets_truncated)) flags.push('DOM 目标已截断');
+  return flags;
 }
 
 function filterRoutes(

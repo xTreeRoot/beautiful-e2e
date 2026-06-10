@@ -74,6 +74,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
     isProjectCreateOpen,
     isProjectAnalysisOpen,
     setIsProjectAnalysisOpen,
+    projectDirectoryPickTarget,
     newProjectName,
     setNewProjectName,
     newProjectDescription,
@@ -82,6 +83,12 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
     setNewProjectExecutionMode,
     newProjectAnalyzeOnCreate,
     setNewProjectAnalyzeOnCreate,
+    newProjectFrontendPath,
+    setNewProjectFrontendPath,
+    pickNewProjectFrontendPath,
+    newProjectBackendPath,
+    setNewProjectBackendPath,
+    pickNewProjectBackendPath,
     newProjectEnvironments,
     newProjectFrontendEnvironmentKey,
     changeNewProjectFrontendEnvironment,
@@ -100,6 +107,12 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
     setEditingProjectDescription,
     editingProjectExecutionMode,
     setEditingProjectExecutionMode,
+    editingProjectFrontendPath,
+    setEditingProjectFrontendPath,
+    pickEditingProjectFrontendPath,
+    editingProjectBackendPath,
+    setEditingProjectBackendPath,
+    pickEditingProjectBackendPath,
     editingProjectEnvironments,
     editingProjectFrontendEnvironmentKey,
     changeEditingProjectFrontendEnvironment,
@@ -195,7 +208,6 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
     runCaseNode,
     rerunCaseFromProgress,
     loadProjectWorkspace,
-    createProjectFromLocalDirectory,
     analyzeCurrentProject,
     addNodeFromTemplate,
     updateSelectedNode,
@@ -244,7 +256,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
           onApiBaseUrlChange={changeApiBaseUrl}
           onRequestHeadersJsonChange={changeRequestHeadersJson}
           onSaveProjectRequestHeaders={() => void saveProjectRequestHeaders()}
-          onCreateProjectFromDirectory={createProjectFromLocalDirectory}
+          onOpenProjectCreate={openProjectCreateModal}
           onOpenProjectManager={openProjectManager}
           onOpenProjectAnalysis={() => setIsProjectAnalysisOpen(true)}
           onOpenGroupCreate={openGroupCreateModal}
@@ -348,6 +360,9 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
         newProjectDescription={newProjectDescription}
         newProjectExecutionMode={newProjectExecutionMode}
         newProjectAnalyzeOnCreate={newProjectAnalyzeOnCreate}
+        projectDirectoryPickTarget={projectDirectoryPickTarget}
+        newProjectFrontendPath={newProjectFrontendPath}
+        newProjectBackendPath={newProjectBackendPath}
         newProjectEnvironments={newProjectEnvironments}
         newProjectFrontendEnvironmentKey={newProjectFrontendEnvironmentKey}
         newProjectApiEnvironmentKey={newProjectApiEnvironmentKey}
@@ -358,6 +373,8 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
         editingProjectName={editingProjectName}
         editingProjectDescription={editingProjectDescription}
         editingProjectExecutionMode={editingProjectExecutionMode}
+        editingProjectFrontendPath={editingProjectFrontendPath}
+        editingProjectBackendPath={editingProjectBackendPath}
         editingProjectEnvironments={editingProjectEnvironments}
         editingProjectFrontendEnvironmentKey={editingProjectFrontendEnvironmentKey}
         editingProjectApiEnvironmentKey={editingProjectApiEnvironmentKey}
@@ -402,6 +419,10 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
         onNewProjectDescriptionChange={setNewProjectDescription}
         onNewProjectExecutionModeChange={setNewProjectExecutionMode}
         onNewProjectAnalyzeOnCreateChange={setNewProjectAnalyzeOnCreate}
+        onNewProjectFrontendPathChange={setNewProjectFrontendPath}
+        onPickNewProjectFrontendPath={() => void pickNewProjectFrontendPath()}
+        onNewProjectBackendPathChange={setNewProjectBackendPath}
+        onPickNewProjectBackendPath={() => void pickNewProjectBackendPath()}
         onNewProjectFrontendEnvironmentChange={changeNewProjectFrontendEnvironment}
         onNewProjectApiEnvironmentChange={changeNewProjectApiEnvironment}
         onNewProjectBaseUrlChange={changeNewProjectBaseUrl}
@@ -412,6 +433,10 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
         onEditingProjectNameChange={setEditingProjectName}
         onEditingProjectDescriptionChange={setEditingProjectDescription}
         onEditingProjectExecutionModeChange={setEditingProjectExecutionMode}
+        onEditingProjectFrontendPathChange={setEditingProjectFrontendPath}
+        onPickEditingProjectFrontendPath={() => void pickEditingProjectFrontendPath()}
+        onEditingProjectBackendPathChange={setEditingProjectBackendPath}
+        onPickEditingProjectBackendPath={() => void pickEditingProjectBackendPath()}
         onEditingProjectFrontendEnvironmentChange={changeEditingProjectFrontendEnvironment}
         onEditingProjectApiEnvironmentChange={changeEditingProjectApiEnvironment}
         onEditingProjectBaseUrlChange={changeEditingProjectBaseUrl}

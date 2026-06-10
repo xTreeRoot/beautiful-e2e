@@ -75,18 +75,33 @@ class ProjectAnalyzer:
                 "path": raw_path,
             }
             summary = self.reader.summarize(raw_path)
+            scan = summary.scan or {}
+            route_suffix = "，接口摘要已按模块公平截断" if scan.get("routes_truncated") else ""
             yield {
                 "message": (
                     f"{self._kind_label(kind)}仓库扫描完成："
-                    f"{len(summary.files)} 个文件、{len(summary.routes)} 条接口、"
-                    f"{len(summary.dom_targets)} 个 DOM 目标。"
+                    f"遍历 {scan.get('scanned_file_count', len(summary.files))} 个可识别文件，"
+                    f"发现 {scan.get('discovered_route_count', len(summary.routes))} 条接口，"
+                    f"入库 {len(summary.files)} 个文件摘要、{len(summary.routes)} 条接口、"
+                    f"{len(summary.dom_targets)} 个 DOM 目标{route_suffix}。"
                 ),
                 "stage": "repo_scan_done",
                 "repository_kind": kind,
                 "exists": summary.exists,
                 "file_count": len(summary.files),
+                "scanned_file_count": scan.get("scanned_file_count", len(summary.files)),
                 "route_count": len(summary.routes),
+                "discovered_route_count": scan.get("discovered_route_count", len(summary.routes)),
                 "dom_target_count": len(summary.dom_targets),
+                "discovered_dom_target_count": scan.get(
+                    "discovered_dom_target_count",
+                    len(summary.dom_targets),
+                ),
+                "scan_group_count": scan.get("scan_group_count", 0),
+                "scan_truncated": bool(scan.get("scan_truncated")),
+                "files_truncated": bool(scan.get("files_truncated")),
+                "routes_truncated": bool(scan.get("routes_truncated")),
+                "dom_targets_truncated": bool(scan.get("dom_targets_truncated")),
             }
             auth_profile = analyze_repository_auth_profile(kind, summary)
             yield {
@@ -254,6 +269,7 @@ class ProjectAnalyzer:
                     [route for route in summary.routes if isinstance(route.get("parameters"), list)]
                 ),
                 "dom_target_count": len(summary.dom_targets),
+                "scan": summary.scan or {},
             }
         )
         index_summary = {

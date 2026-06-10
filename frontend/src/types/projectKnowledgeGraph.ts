@@ -12,6 +12,7 @@ export type KnowledgeGraphRoute = {
   role?: string | null;
   produces?: string[];
   consumes?: string[];
+  related_domains?: string[];
   request_body_fields?: string[];
   applicable_scenarios?: string[];
   excluded_scenarios?: string[];
@@ -31,6 +32,7 @@ export type KnowledgeGraphModule = {
   entrypoint_route_ids?: string[];
   routes?: KnowledgeGraphRoute[];
   scope_boundary?: string | null;
+  related_domains?: string[];
   evidence?: string[];
 };
 

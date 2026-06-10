@@ -15,6 +15,11 @@ import {
 import type { ExecutionMode } from '../types/workbench';
 
 type ToastType = 'success' | 'info' | 'warning' | 'error';
+type ProjectDirectoryPickTarget =
+  | 'new-project-frontend'
+  | 'new-project-backend'
+  | 'editing-project-frontend'
+  | 'editing-project-backend';
 
 type UseWorkbenchProjectSettingsOptions = {
   project?: Project;
@@ -48,10 +53,14 @@ export function useWorkbenchProjectSettings({
   const [isProjectManagerOpen, setIsProjectManagerOpen] = useState(false);
   const [isProjectCreateOpen, setIsProjectCreateOpen] = useState(false);
   const [isProjectAnalysisOpen, setIsProjectAnalysisOpen] = useState(false);
+  const [projectDirectoryPickTarget, setProjectDirectoryPickTarget] =
+    useState<ProjectDirectoryPickTarget | null>(null);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDescription, setNewProjectDescription] = useState('');
   const [newProjectExecutionMode, setNewProjectExecutionMode] = useState<ExecutionMode>('fullstack');
   const [newProjectAnalyzeOnCreate, setNewProjectAnalyzeOnCreate] = useState(true);
+  const [newProjectFrontendPath, setNewProjectFrontendPath] = useState('');
+  const [newProjectBackendPath, setNewProjectBackendPath] = useState('');
   const [newProjectEnvironments, setNewProjectEnvironments] = useState<ProjectEnvironment[]>([]);
   const [newProjectFrontendEnvironmentKey, setNewProjectFrontendEnvironmentKey] = useState(DEFAULT_ENVIRONMENT_KEY);
   const [newProjectApiEnvironmentKey, setNewProjectApiEnvironmentKey] = useState(DEFAULT_ENVIRONMENT_KEY);
@@ -62,6 +71,8 @@ export function useWorkbenchProjectSettings({
   const [editingProjectName, setEditingProjectName] = useState('');
   const [editingProjectDescription, setEditingProjectDescription] = useState('');
   const [editingProjectExecutionMode, setEditingProjectExecutionMode] = useState<ExecutionMode>('fullstack');
+  const [editingProjectFrontendPath, setEditingProjectFrontendPath] = useState('');
+  const [editingProjectBackendPath, setEditingProjectBackendPath] = useState('');
   const [editingProjectEnvironments, setEditingProjectEnvironments] = useState<ProjectEnvironment[]>([]);
   const [editingProjectFrontendEnvironmentKey, setEditingProjectFrontendEnvironmentKey] =
     useState(DEFAULT_ENVIRONMENT_KEY);
@@ -287,6 +298,8 @@ export function useWorkbenchProjectSettings({
     setNewProjectName('');
     setNewProjectDescription('');
     setNewProjectExecutionMode(executionMode);
+    setNewProjectFrontendPath('');
+    setNewProjectBackendPath('');
     setNewProjectEnvironments(environments);
     setNewProjectFrontendEnvironmentKey(activeFrontendEnvironmentKey);
     setNewProjectApiEnvironmentKey(activeApiEnvironmentKey);
@@ -302,6 +315,8 @@ export function useWorkbenchProjectSettings({
     setNewProjectName('');
     setNewProjectDescription('');
     setNewProjectExecutionMode(executionMode);
+    setNewProjectFrontendPath('');
+    setNewProjectBackendPath('');
     setNewProjectEnvironments([]);
     setNewProjectFrontendEnvironmentKey(DEFAULT_ENVIRONMENT_KEY);
     setNewProjectApiEnvironmentKey(DEFAULT_ENVIRONMENT_KEY);
@@ -332,6 +347,27 @@ export function useWorkbenchProjectSettings({
     );
   }
 
+  async function pickNewProjectFrontendPath() {
+    await pickProjectDirectory(
+      'new-project-frontend',
+      '选择前端项目目录',
+      newProjectFrontendPath,
+      setNewProjectFrontendPath
+    );
+  }
+
+  async function pickNewProjectBackendPath() {
+    await pickProjectDirectory(
+      'new-project-backend',
+      '选择本地项目目录',
+      newProjectBackendPath,
+      (path) => {
+        setNewProjectBackendPath(path);
+        if (!newProjectName.trim()) setNewProjectName(projectNameFromPath(path));
+      }
+    );
+  }
+
   function changeNewProjectFrontendEnvironment(environmentKey: string) {
     const nextEnvironment = newProjectEnvironments.find((environment) => environment.key === environmentKey);
     if (!nextEnvironment) return;
@@ -348,10 +384,15 @@ export function useWorkbenchProjectSettings({
   }
 
   function startProjectEdit(item: Project) {
+    const settings = item.settings ?? {};
+    const workspacePath = String(settings.workspace_path ?? '');
+    const backendRepoPath = String(settings.backend_repo_path ?? '');
     setEditingProjectId(item.id);
     setEditingProjectName(item.name);
     setEditingProjectDescription(item.description ?? '');
     setEditingProjectExecutionMode(getProjectExecutionMode(item));
+    setEditingProjectFrontendPath(String(settings.frontend_repo_path ?? ''));
+    setEditingProjectBackendPath(backendRepoPath || workspacePath);
     const environmentState = normalizeProjectEnvironments(item.settings);
     setEditingProjectEnvironments(environmentState.environments);
     setEditingProjectFrontendEnvironmentKey(environmentState.activeFrontendEnvironmentKey);
@@ -366,6 +407,8 @@ export function useWorkbenchProjectSettings({
     setEditingProjectName('');
     setEditingProjectDescription('');
     setEditingProjectExecutionMode('fullstack');
+    setEditingProjectFrontendPath('');
+    setEditingProjectBackendPath('');
     setEditingProjectEnvironments([]);
     setEditingProjectFrontendEnvironmentKey(DEFAULT_ENVIRONMENT_KEY);
     setEditingProjectApiEnvironmentKey(DEFAULT_ENVIRONMENT_KEY);
@@ -410,6 +453,60 @@ export function useWorkbenchProjectSettings({
     setEditingProjectRequestHeadersJson(nextEnvironment.requestHeadersJson);
   }
 
+  async function pickEditingProjectFrontendPath() {
+    await pickProjectDirectory(
+      'editing-project-frontend',
+      '选择前端项目目录',
+      editingProjectFrontendPath,
+      setEditingProjectFrontendPath
+    );
+  }
+
+  async function pickEditingProjectBackendPath() {
+    await pickProjectDirectory(
+      'editing-project-backend',
+      '选择本地项目目录',
+      editingProjectBackendPath,
+      setEditingProjectBackendPath
+    );
+  }
+
+  async function pickProjectDirectory(
+    target: ProjectDirectoryPickTarget,
+    title: string,
+    currentPath: string,
+    onPicked: (path: string) => void
+  ) {
+    if (offlineMode) {
+      const message = '后端未连接，暂时不能选择本地目录';
+      setStatus(message);
+      showToast('warning', message);
+      return;
+    }
+    setProjectDirectoryPickTarget(target);
+    setStatus(title);
+    try {
+      const picked = await api.pickDirectory({
+        title,
+        initial_path: currentPath.trim() || undefined
+      });
+      if (!picked.path) {
+        setStatus('目录选择已取消');
+        showToast('info', '已取消选择目录');
+        return;
+      }
+      onPicked(picked.path);
+      setStatus('项目目录已选择');
+      showToast('success', '项目目录已选择');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '目录选择失败';
+      setStatus(message);
+      showToast('error', message);
+    } finally {
+      setProjectDirectoryPickTarget(null);
+    }
+  }
+
   return {
     executionMode,
     setExecutionMode,
@@ -430,6 +527,7 @@ export function useWorkbenchProjectSettings({
     isProjectCreateOpen,
     isProjectAnalysisOpen,
     setIsProjectAnalysisOpen,
+    projectDirectoryPickTarget,
     newProjectName,
     setNewProjectName,
     newProjectDescription,
@@ -438,6 +536,12 @@ export function useWorkbenchProjectSettings({
     setNewProjectExecutionMode,
     newProjectAnalyzeOnCreate,
     setNewProjectAnalyzeOnCreate,
+    newProjectFrontendPath,
+    setNewProjectFrontendPath,
+    pickNewProjectFrontendPath,
+    newProjectBackendPath,
+    setNewProjectBackendPath,
+    pickNewProjectBackendPath,
     newProjectEnvironments,
     newProjectFrontendEnvironmentKey,
     changeNewProjectFrontendEnvironment,
@@ -456,6 +560,12 @@ export function useWorkbenchProjectSettings({
     setEditingProjectDescription,
     editingProjectExecutionMode,
     setEditingProjectExecutionMode,
+    editingProjectFrontendPath,
+    setEditingProjectFrontendPath,
+    pickEditingProjectFrontendPath,
+    editingProjectBackendPath,
+    setEditingProjectBackendPath,
+    pickEditingProjectBackendPath,
     editingProjectEnvironments,
     editingProjectFrontendEnvironmentKey,
     changeEditingProjectFrontendEnvironment,
@@ -479,4 +589,13 @@ export function useWorkbenchProjectSettings({
     startProjectEdit,
     cancelProjectEdit
   };
+}
+
+function projectNameFromPath(path: string): string {
+  const pathParts = path.split(/[\\/]/).filter(Boolean);
+  const rawName = pathParts[pathParts.length - 1] ?? '本地项目';
+  return rawName
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b[a-z]/g, (match: string) => match.toUpperCase())
+    .trim();
 }

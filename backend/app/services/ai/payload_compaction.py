@@ -401,6 +401,7 @@ def _compact_analysis_module(module: dict[str, Any]) -> dict[str, Any]:
         "domain": module.get("domain"),
         "route_count": module.get("route_count"),
         "scope_boundary": _trim_text(module.get("scope_boundary"), 260),
+        "related_domains": module.get("related_domains"),
         "entrypoint_candidates": [
             _compact_analysis_route(route)
             for route in (entrypoints or [])[:6]
@@ -422,7 +423,7 @@ def _compact_analysis_module(module: dict[str, Any]) -> dict[str, Any]:
 
 def _compact_analysis_route(route: dict[str, Any]) -> dict[str, Any]:
     compacted = _compact_route(route)
-    for key in ["role", "produces", "consumes", "request_body_fields"]:
+    for key in ["role", "produces", "consumes", "related_domains", "request_body_fields"]:
         value = route.get(key)
         if value not in (None, "", [], {}):
             compacted[key] = value
@@ -483,6 +484,7 @@ def _compact_knowledge_module(module: dict[str, Any]) -> dict[str, Any]:
         "repository_kind": module.get("repository_kind"),
         "review_status": module.get("review_status"),
         "scope_boundary": _trim_text(module.get("scope_boundary"), 260),
+        "related_domains": module.get("related_domains"),
         "entrypoint_route_ids": module.get("entrypoint_route_ids"),
         "routes": [
             _compact_knowledge_route(route)
@@ -507,6 +509,7 @@ def _compact_knowledge_route(route: dict[str, Any]) -> dict[str, Any]:
         "role": route.get("role"),
         "produces": route.get("produces"),
         "consumes": route.get("consumes"),
+        "related_domains": route.get("related_domains"),
         "applicable_scenarios": _string_list(route.get("applicable_scenarios"), 4, 160),
         "excluded_scenarios": _string_list(route.get("excluded_scenarios"), 4, 180),
         "review_status": route.get("review_status"),

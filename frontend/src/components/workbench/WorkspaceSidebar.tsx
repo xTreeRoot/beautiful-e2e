@@ -68,7 +68,7 @@ type WorkspaceSidebarProps = {
   onApiBaseUrlChange: (value: string) => void;
   onRequestHeadersJsonChange: (value: string) => void;
   onSaveProjectRequestHeaders: () => void;
-  onCreateProjectFromDirectory: () => void;
+  onOpenProjectCreate: () => void;
   onOpenProjectManager: () => void;
   onOpenProjectAnalysis: () => void;
   onOpenGroupCreate: () => void;
@@ -109,7 +109,7 @@ export function WorkspaceSidebar({
   onApiBaseUrlChange,
   onRequestHeadersJsonChange,
   onSaveProjectRequestHeaders,
-  onCreateProjectFromDirectory,
+  onOpenProjectCreate,
   onOpenProjectManager,
   onOpenProjectAnalysis,
   onOpenGroupCreate,
@@ -157,7 +157,7 @@ export function WorkspaceSidebar({
           onApiBaseUrlChange={onApiBaseUrlChange}
           onRequestHeadersJsonChange={onRequestHeadersJsonChange}
           onSaveProjectRequestHeaders={onSaveProjectRequestHeaders}
-          onCreateProjectFromDirectory={onCreateProjectFromDirectory}
+          onOpenProjectCreate={onOpenProjectCreate}
           onOpenProjectManager={onOpenProjectManager}
           onOpenProjectAnalysis={onOpenProjectAnalysis}
         />
@@ -227,7 +227,7 @@ function ProjectSidebarPanel({
   onApiBaseUrlChange,
   onRequestHeadersJsonChange,
   onSaveProjectRequestHeaders,
-  onCreateProjectFromDirectory,
+  onOpenProjectCreate,
   onOpenProjectManager,
   onOpenProjectAnalysis
 }: {
@@ -249,7 +249,7 @@ function ProjectSidebarPanel({
   onApiBaseUrlChange: (value: string) => void;
   onRequestHeadersJsonChange: (value: string) => void;
   onSaveProjectRequestHeaders: () => void;
-  onCreateProjectFromDirectory: () => void;
+  onOpenProjectCreate: () => void;
   onOpenProjectManager: () => void;
   onOpenProjectAnalysis: () => void;
 }) {
@@ -300,7 +300,7 @@ function ProjectSidebarPanel({
             className="secondary-button project-action"
             icon={<FolderOpen size={16} />}
             loading={isCreatingProject}
-            onClick={onCreateProjectFromDirectory}
+            onClick={onOpenProjectCreate}
           >
             本地新建
           </Button>

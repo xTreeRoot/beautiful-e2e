@@ -42,6 +42,9 @@ type WorkspaceModalsProps = {
   newProjectDescription: string;
   newProjectExecutionMode: ExecutionMode;
   newProjectAnalyzeOnCreate: boolean;
+  projectDirectoryPickTarget: string | null;
+  newProjectFrontendPath: string;
+  newProjectBackendPath: string;
   newProjectEnvironments: ProjectEnvironment[];
   newProjectFrontendEnvironmentKey: string;
   newProjectApiEnvironmentKey: string;
@@ -52,6 +55,8 @@ type WorkspaceModalsProps = {
   editingProjectName: string;
   editingProjectDescription: string;
   editingProjectExecutionMode: ExecutionMode;
+  editingProjectFrontendPath: string;
+  editingProjectBackendPath: string;
   editingProjectEnvironments: ProjectEnvironment[];
   editingProjectFrontendEnvironmentKey: string;
   editingProjectApiEnvironmentKey: string;
@@ -92,6 +97,10 @@ type WorkspaceModalsProps = {
   onNewProjectDescriptionChange: (value: string) => void;
   onNewProjectExecutionModeChange: (mode: ExecutionMode) => void;
   onNewProjectAnalyzeOnCreateChange: (enabled: boolean) => void;
+  onNewProjectFrontendPathChange: (value: string) => void;
+  onPickNewProjectFrontendPath: () => void;
+  onNewProjectBackendPathChange: (value: string) => void;
+  onPickNewProjectBackendPath: () => void;
   onNewProjectFrontendEnvironmentChange: (environmentKey: string) => void;
   onNewProjectApiEnvironmentChange: (environmentKey: string) => void;
   onNewProjectBaseUrlChange: (value: string) => void;
@@ -102,6 +111,10 @@ type WorkspaceModalsProps = {
   onEditingProjectNameChange: (value: string) => void;
   onEditingProjectDescriptionChange: (value: string) => void;
   onEditingProjectExecutionModeChange: (mode: ExecutionMode) => void;
+  onEditingProjectFrontendPathChange: (value: string) => void;
+  onPickEditingProjectFrontendPath: () => void;
+  onEditingProjectBackendPathChange: (value: string) => void;
+  onPickEditingProjectBackendPath: () => void;
   onEditingProjectFrontendEnvironmentChange: (environmentKey: string) => void;
   onEditingProjectApiEnvironmentChange: (environmentKey: string) => void;
   onEditingProjectBaseUrlChange: (value: string) => void;
@@ -176,6 +189,8 @@ export function WorkspaceModals(props: WorkspaceModalsProps) {
         name={props.newProjectName}
         description={props.newProjectDescription}
         executionMode={props.newProjectExecutionMode}
+        frontendPath={props.newProjectFrontendPath}
+        backendPath={props.newProjectBackendPath}
         environments={props.newProjectEnvironments}
         frontendEnvironmentKey={props.newProjectFrontendEnvironmentKey}
         apiEnvironmentKey={props.newProjectApiEnvironmentKey}
@@ -184,9 +199,15 @@ export function WorkspaceModals(props: WorkspaceModalsProps) {
         requestHeadersJson={props.newProjectRequestHeadersJson}
         analyzeOnCreate={props.newProjectAnalyzeOnCreate}
         loading={props.projectActionId === '__create'}
+        pickingFrontendPath={props.projectDirectoryPickTarget === 'new-project-frontend'}
+        pickingBackendPath={props.projectDirectoryPickTarget === 'new-project-backend'}
         onNameChange={props.onNewProjectNameChange}
         onDescriptionChange={props.onNewProjectDescriptionChange}
         onExecutionModeChange={props.onNewProjectExecutionModeChange}
+        onFrontendPathChange={props.onNewProjectFrontendPathChange}
+        onBackendPathChange={props.onNewProjectBackendPathChange}
+        onPickFrontendPath={props.onPickNewProjectFrontendPath}
+        onPickBackendPath={props.onPickNewProjectBackendPath}
         onFrontendEnvironmentChange={props.onNewProjectFrontendEnvironmentChange}
         onApiEnvironmentChange={props.onNewProjectApiEnvironmentChange}
         onBaseUrlChange={props.onNewProjectBaseUrlChange}
@@ -201,6 +222,8 @@ export function WorkspaceModals(props: WorkspaceModalsProps) {
         name={props.editingProjectName}
         description={props.editingProjectDescription}
         executionMode={props.editingProjectExecutionMode}
+        frontendPath={props.editingProjectFrontendPath}
+        backendPath={props.editingProjectBackendPath}
         environments={props.editingProjectEnvironments}
         frontendEnvironmentKey={props.editingProjectFrontendEnvironmentKey}
         apiEnvironmentKey={props.editingProjectApiEnvironmentKey}
@@ -208,9 +231,15 @@ export function WorkspaceModals(props: WorkspaceModalsProps) {
         apiBaseUrl={props.editingProjectApiBaseUrl}
         requestHeadersJson={props.editingProjectRequestHeadersJson}
         loading={props.editingProjectId ? props.projectActionId === props.editingProjectId : false}
+        pickingFrontendPath={props.projectDirectoryPickTarget === 'editing-project-frontend'}
+        pickingBackendPath={props.projectDirectoryPickTarget === 'editing-project-backend'}
         onNameChange={props.onEditingProjectNameChange}
         onDescriptionChange={props.onEditingProjectDescriptionChange}
         onExecutionModeChange={props.onEditingProjectExecutionModeChange}
+        onFrontendPathChange={props.onEditingProjectFrontendPathChange}
+        onBackendPathChange={props.onEditingProjectBackendPathChange}
+        onPickFrontendPath={props.onPickEditingProjectFrontendPath}
+        onPickBackendPath={props.onPickEditingProjectBackendPath}
         onFrontendEnvironmentChange={props.onEditingProjectFrontendEnvironmentChange}
         onApiEnvironmentChange={props.onEditingProjectApiEnvironmentChange}
         onBaseUrlChange={props.onEditingProjectBaseUrlChange}

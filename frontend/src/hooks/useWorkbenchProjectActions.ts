@@ -10,17 +10,20 @@ type UseWorkbenchProjectActionsOptions = {
   project?: Project;
   projects: Project[];
   offlineMode: boolean;
-  workspacePath: string | undefined;
   newProjectName: string;
   newProjectDescription: string;
   newProjectExecutionMode: ExecutionMode;
   newProjectAnalyzeOnCreate: boolean;
+  newProjectFrontendPath: string;
+  newProjectBackendPath: string;
   newProjectEnvironments: ProjectEnvironment[];
   newProjectFrontendEnvironmentKey: string;
   newProjectApiEnvironmentKey: string;
   editingProjectName: string;
   editingProjectDescription: string;
   editingProjectExecutionMode: ExecutionMode;
+  editingProjectFrontendPath: string;
+  editingProjectBackendPath: string;
   editingProjectEnvironments: ProjectEnvironment[];
   editingProjectFrontendEnvironmentKey: string;
   editingProjectApiEnvironmentKey: string;
@@ -58,17 +61,20 @@ export function useWorkbenchProjectActions({
   project,
   projects,
   offlineMode,
-  workspacePath,
   newProjectName,
   newProjectDescription,
   newProjectExecutionMode,
   newProjectAnalyzeOnCreate,
+  newProjectFrontendPath,
+  newProjectBackendPath,
   newProjectEnvironments,
   newProjectFrontendEnvironmentKey,
   newProjectApiEnvironmentKey,
   editingProjectName,
   editingProjectDescription,
   editingProjectExecutionMode,
+  editingProjectFrontendPath,
+  editingProjectBackendPath,
   editingProjectEnvironments,
   editingProjectFrontendEnvironmentKey,
   editingProjectApiEnvironmentKey,
@@ -87,7 +93,6 @@ export function useWorkbenchProjectActions({
   showToast
 }: UseWorkbenchProjectActionsOptions) {
   const [projectActionId, setProjectActionId] = useState<string | null>(null);
-  const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
 
   async function refreshProjectList() {
@@ -142,14 +147,19 @@ export function useWorkbenchProjectActions({
         newProjectFrontendEnvironmentKey,
         newProjectApiEnvironmentKey
       );
+      const backendPath = newProjectBackendPath.trim();
+      const frontendPath =
+        newProjectExecutionMode === 'fullstack' ? newProjectFrontendPath.trim() : '';
       const created = await api.createProject({
         name,
-        description: newProjectDescription.trim() || undefined,
+        description:
+          newProjectDescription.trim() ||
+          (backendPath ? `从本地目录 ${backendPath} 选择的项目` : undefined),
         settings: {
           execution_mode: newProjectExecutionMode,
-          frontend_repo_path: '',
-          backend_repo_path: '',
-          workspace_path: '',
+          frontend_repo_path: frontendPath,
+          backend_repo_path: backendPath,
+          workspace_path: backendPath,
           ...settingsPatch
         },
         analyze_on_create: newProjectAnalyzeOnCreate
@@ -181,10 +191,16 @@ export function useWorkbenchProjectActions({
         editingProjectFrontendEnvironmentKey,
         editingProjectApiEnvironmentKey
       );
+      const backendPath = editingProjectBackendPath.trim();
+      const frontendPath =
+        editingProjectExecutionMode === 'fullstack' ? editingProjectFrontendPath.trim() : '';
       const saved = await api.updateProject(projectId, {
         name,
         description: editingProjectDescription.trim() || null,
         execution_mode: editingProjectExecutionMode,
+        frontend_repo_path: frontendPath,
+        backend_repo_path: backendPath,
+        workspace_path: backendPath,
         base_url: settingsPatch.base_url,
         api_base_url: settingsPatch.api_base_url,
         settings: settingsPatch
@@ -270,41 +286,6 @@ export function useWorkbenchProjectActions({
     }
   }
 
-  async function createProjectFromLocalDirectory() {
-    if (offlineMode) {
-      const message = '后端未连接，暂时不能从本地新建项目';
-      setStatus(message);
-      showToast('warning', message);
-      return;
-    }
-    setIsCreatingProject(true);
-    setStatus('请选择本地项目目录');
-    try {
-      const picked = await api.pickDirectory({
-        title: '选择本地项目目录',
-        initial_path: workspacePath || undefined
-      });
-      if (!picked.path) {
-        setStatus('项目创建已取消');
-        showToast('info', '已取消新建项目');
-        return;
-      }
-      const created = await api.createProjectFromDirectory({
-        path: picked.path,
-        analyze_on_create: newProjectAnalyzeOnCreate
-      });
-      await loadProjectWorkspace(created.id);
-      setStatus(`项目已创建：${created.name}`);
-      showToast('success', `已新建项目：${created.name}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '项目创建失败';
-      setStatus(message);
-      showToast('error', message);
-    } finally {
-      setIsCreatingProject(false);
-    }
-  }
-
   async function analyzeCurrentProject() {
     if (!project || offlineMode) {
       const message = '后端未连接，暂时不能更新项目分析';
@@ -352,14 +333,13 @@ export function useWorkbenchProjectActions({
 
   return {
     projectActionId,
-    isCreatingProject,
+    isCreatingProject: projectActionId === '__create',
     isAnalyzingProject,
     refreshProjectList,
     createManagedProject,
     updateManagedProject,
     deleteManagedProject,
     loadProjectWorkspace,
-    createProjectFromLocalDirectory,
     analyzeCurrentProject
   };
 }

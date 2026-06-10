@@ -490,6 +490,7 @@ select {
 }
 
 .control-field .ant-input,
+.control-field .ant-input-affix-wrapper,
 .control-field .ant-select-selector {
   min-height: 40px;
   border-color: #cfc8ba;
@@ -505,11 +506,25 @@ select {
   align-items: center;
 }
 
-.control-field .ant-input:not(textarea) {
+.control-field .ant-input:not(textarea),
+.control-field .ant-input-affix-wrapper {
   padding: 0 10px;
 }
 
+.control-field .ant-input-affix-wrapper .ant-input {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
 .base-url-env-control.ant-space-compact {
+  display: flex;
+  width: 100%;
+}
+
+.project-path-control.ant-space-compact {
   display: flex;
   width: 100%;
 }
@@ -519,9 +534,26 @@ select {
   min-width: 0;
 }
 
+.control-field .project-path-control .ant-input,
+.control-field .project-path-control .ant-input-affix-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .control-field .base-url-env-control .ant-select {
   flex: 0 0 92px;
   width: 92px;
+}
+
+.control-field .project-path-control .ant-btn {
+  flex: 0 0 92px;
+  min-height: 40px;
+  width: 92px;
+  border-color: #cfc8ba;
+  background: #fffefa;
+  color: #222833;
+  font-weight: 800;
+  justify-content: center;
 }
 
 .control-field textarea.ant-input {
@@ -604,12 +636,14 @@ select {
 
 .control-field .ant-input:focus,
 .control-field .ant-input-focused,
+.control-field .ant-input-affix-wrapper-focused,
 .control-field .ant-select-focused .ant-select-selector {
   border-color: #1f7a6a;
   box-shadow: 0 0 0 3px rgba(31, 122, 106, 0.16);
 }
 
 .control-field .ant-input[disabled],
+.control-field .ant-input-affix-wrapper-disabled,
 .control-field .ant-select-disabled .ant-select-selector {
   background: #eee9df;
   color: #8b8378;

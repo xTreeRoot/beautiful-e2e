@@ -7,9 +7,9 @@ from typing import Any
 from app.services.repo_reader import RepoSummary
 
 PROJECT_ROUTE_ANALYSIS_VERSION = "project_route_analysis.v1"
-MAX_MODULES = 24
-MAX_ROUTES_PER_MODULE = 16
-MAX_RELATIONSHIPS = 80
+MAX_MODULES = 128
+MAX_ROUTES_PER_MODULE = 32
+MAX_RELATIONSHIPS = 300
 
 DISCOVERY_TERMS = ("page", "list", "search", "query", "分页", "列表", "搜索", "查询")
 DETAIL_TERMS = ("detail", "info", "home", "详情", "首页")
@@ -65,7 +65,10 @@ def build_project_route_analysis(kind: str, summary: RepoSummary) -> dict[str, A
 
     route_profiles = [_route_profile(route) for route in summary.routes]
     modules = _group_modules(route_profiles)
-    relationships = _variable_relationships(route_profiles)
+    relationships = [
+        *_variable_relationships(route_profiles),
+        *_path_related_module_relationships(route_profiles, modules),
+    ]
     return {
         "version": PROJECT_ROUTE_ANALYSIS_VERSION,
         "kind": kind,
@@ -120,6 +123,7 @@ def _group_modules(route_profiles: list[dict[str, Any]]) -> list[dict[str, Any]]
     for module_id, profiles in grouped.items():
         meta = module_meta[module_id]
         prioritized_profiles = sorted(profiles, key=_module_route_sort_key)
+        related_domains = _module_related_domains(profiles)
         routes = [
             _compact_route_profile(profile)
             for profile in prioritized_profiles[:MAX_ROUTES_PER_MODULE]
@@ -136,7 +140,8 @@ def _group_modules(route_profiles: list[dict[str, Any]]) -> list[dict[str, Any]]
                     if route.get("role") == "discovery"
                 ][:6],
                 "routes": routes,
-                "scope_boundary": meta.get("scope_boundary"),
+                "scope_boundary": _scope_boundary(meta["domain"], related_domains),
+                "related_domains": related_domains,
                 "evidence": _module_evidence(profiles),
                 "review_status": "draft",
             }
@@ -176,6 +181,66 @@ def _variable_relationships(route_profiles: list[dict[str, Any]]) -> list[dict[s
     return relationships
 
 
+def _path_related_module_relationships(
+    route_profiles: list[dict[str, Any]],
+    modules: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    module_by_domain = {
+        str(module.get("domain")): module
+        for module in modules
+        if module.get("domain")
+    }
+    relationships: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for profile in route_profiles:
+        module = profile.get("module") if isinstance(profile.get("module"), dict) else {}
+        source_module_id = str(module.get("id") or "")
+        for related_domain in module.get("related_domains") or []:
+            target = module_by_domain.get(str(related_domain))
+            if not target or target.get("id") == source_module_id:
+                continue
+            key = (source_module_id, str(target["id"]), str(profile["route"].get("path") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            relationships.append(_path_related_relationship(profile, target, str(related_domain)))
+    return relationships
+
+
+def _path_related_relationship(
+    profile: dict[str, Any],
+    target_module: dict[str, Any],
+    related_domain: str,
+) -> dict[str, Any]:
+    target_route = _module_reference_route(target_module)
+    return {
+        "type": "module_reference",
+        "variable": related_domain,
+        "from_route": _route_identity(profile["route"]),
+        "to_route": target_route,
+        "from_module": profile["module"]["id"],
+        "to_module": target_module["id"],
+        "confidence": 0.66,
+        "confirmed": False,
+        "reason": "路径后续段命中另一个模块主域，表示当前接口可能涉及跨模块关联。",
+        "evidence": [_evidence_text("module_reference", profile["route"])],
+    }
+
+
+def _module_reference_route(module: dict[str, Any]) -> dict[str, Any]:
+    entrypoints = module.get("entrypoint_candidates")
+    if isinstance(entrypoints, list):
+        for route in entrypoints:
+            if isinstance(route, dict):
+                return route
+    routes = module.get("routes")
+    if isinstance(routes, list):
+        for route in routes:
+            if isinstance(route, dict):
+                return route
+    return {}
+
+
 def _relationship(
     variable: str,
     producer: dict[str, Any],
@@ -205,18 +270,30 @@ def _relationship(
     }
 
 
-def _route_module(route: dict[str, Any], text: str) -> dict[str, str]:
+def _route_module(route: dict[str, Any], text: str) -> dict[str, Any]:
     path = str(route.get("path") or "").lower()
     segments = _semantic_route_segments(path)
-    family_segments = segments[:4]
-    family = "_".join(family_segments) or _route_family(path)
-    parent = family_segments[0] if family_segments else family
+    family = segments[0] if segments else _route_family(path)
+    related_segments = segments[1:]
     return {
         "id": f"module_{family or 'general'}",
-        "name": _fallback_module_name(family_segments or [family]),
-        "domain": parent or "general",
-        "scope_boundary": _scope_boundary(family_segments),
+        "name": _fallback_module_name([family]),
+        "domain": family or "general",
+        "scope_boundary": _scope_boundary(family, related_segments),
+        "related_domains": related_segments,
     }
+
+
+def _module_related_domains(profiles: list[dict[str, Any]]) -> list[str]:
+    domains: list[str] = []
+    for profile in profiles:
+        module = profile.get("module")
+        if not isinstance(module, dict):
+            continue
+        for domain in module.get("related_domains") or []:
+            if isinstance(domain, str):
+                domains.append(domain)
+    return list(dict.fromkeys(domains))
 
 
 def _module_route_sort_key(profile: dict[str, Any]) -> tuple[int, int, str]:
@@ -288,11 +365,13 @@ def _domain_variable(variable: str, text: str) -> str:
 def _compact_route_profile(profile: dict[str, Any]) -> dict[str, Any]:
     route = profile["route"]
     request_body = route.get("request_body")
+    module = profile.get("module") if isinstance(profile.get("module"), dict) else {}
     return {
         **_route_identity(route),
         "role": profile["role"],
         "produces": profile["produces"],
         "consumes": profile["consumes"],
+        "related_domains": module.get("related_domains", []),
         "request_body_fields": (
             _request_body_fields(request_body)[:12] if isinstance(request_body, dict) else []
         ),
@@ -366,14 +445,12 @@ def _fallback_module_name(segments: list[str]) -> str:
     return " / ".join(segments) + " 模块"
 
 
-def _scope_boundary(segments: list[str]) -> str | None:
-    if len(segments) <= 1:
+def _scope_boundary(family: str, related_segments: list[str]) -> str | None:
+    if not family or not related_segments:
         return None
-    parent = segments[0]
-    child = "/".join(segments[1:])
     return (
-        f"该模块由路径段 `{parent}/{child}` 推断；只有提示词、文档或人工审核命中这些子域词时，"
-        f"才可替代 `{parent}` 的上级入口。"
+        f"该模块按主路径段 `{family}` 归类；后续路径段 `{ '/'.join(related_segments) }` "
+        "仅作为动作、子域或跨模块关联线索，不能单独拆成模块。"
     )
 
 

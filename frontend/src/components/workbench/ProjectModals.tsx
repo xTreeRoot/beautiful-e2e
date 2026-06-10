@@ -1,5 +1,5 @@
 import { Button, Flex, Input, List, Modal, Popconfirm, Segmented, Select, Space, Switch, Tag, Typography } from 'antd';
-import { Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { FolderOpen, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 
 import type { Project } from '../../api';
 import { formatExecutionMode, formatProjectMeta, getProjectExecutionMode } from '../../lib/project';
@@ -108,6 +108,8 @@ export function ProjectCreateModal({
   name,
   description,
   executionMode,
+  frontendPath,
+  backendPath,
   environments,
   frontendEnvironmentKey,
   apiEnvironmentKey,
@@ -116,9 +118,15 @@ export function ProjectCreateModal({
   requestHeadersJson,
   analyzeOnCreate,
   loading,
+  pickingFrontendPath,
+  pickingBackendPath,
   onNameChange,
   onDescriptionChange,
   onExecutionModeChange,
+  onFrontendPathChange,
+  onBackendPathChange,
+  onPickFrontendPath,
+  onPickBackendPath,
   onFrontendEnvironmentChange,
   onApiEnvironmentChange,
   onBaseUrlChange,
@@ -132,6 +140,8 @@ export function ProjectCreateModal({
   name: string;
   description: string;
   executionMode: ExecutionMode;
+  frontendPath: string;
+  backendPath: string;
   environments: ProjectEnvironment[];
   frontendEnvironmentKey: string;
   apiEnvironmentKey: string;
@@ -140,9 +150,15 @@ export function ProjectCreateModal({
   requestHeadersJson: string;
   analyzeOnCreate: boolean;
   loading: boolean;
+  pickingFrontendPath: boolean;
+  pickingBackendPath: boolean;
   onNameChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
   onExecutionModeChange: (mode: ExecutionMode) => void;
+  onFrontendPathChange: (value: string) => void;
+  onBackendPathChange: (value: string) => void;
+  onPickFrontendPath: () => void;
+  onPickBackendPath: () => void;
   onFrontendEnvironmentChange: (environmentKey: string) => void;
   onApiEnvironmentChange: (environmentKey: string) => void;
   onBaseUrlChange: (value: string) => void;
@@ -189,6 +205,17 @@ export function ProjectCreateModal({
             ]}
           />
         </div>
+        <ProjectRepositoryPathFields
+          executionMode={executionMode}
+          frontendPath={frontendPath}
+          backendPath={backendPath}
+          pickingFrontendPath={pickingFrontendPath}
+          pickingBackendPath={pickingBackendPath}
+          onFrontendPathChange={onFrontendPathChange}
+          onBackendPathChange={onBackendPathChange}
+          onPickFrontendPath={onPickFrontendPath}
+          onPickBackendPath={onPickBackendPath}
+        />
         <ProjectBaseUrlFields
           executionMode={executionMode}
           environments={environments}
@@ -217,6 +244,8 @@ export function ProjectEditModal({
   name,
   description,
   executionMode,
+  frontendPath,
+  backendPath,
   environments,
   frontendEnvironmentKey,
   apiEnvironmentKey,
@@ -224,9 +253,15 @@ export function ProjectEditModal({
   apiBaseUrl,
   requestHeadersJson,
   loading,
+  pickingFrontendPath,
+  pickingBackendPath,
   onNameChange,
   onDescriptionChange,
   onExecutionModeChange,
+  onFrontendPathChange,
+  onBackendPathChange,
+  onPickFrontendPath,
+  onPickBackendPath,
   onFrontendEnvironmentChange,
   onApiEnvironmentChange,
   onBaseUrlChange,
@@ -239,6 +274,8 @@ export function ProjectEditModal({
   name: string;
   description: string;
   executionMode: ExecutionMode;
+  frontendPath: string;
+  backendPath: string;
   environments: ProjectEnvironment[];
   frontendEnvironmentKey: string;
   apiEnvironmentKey: string;
@@ -246,9 +283,15 @@ export function ProjectEditModal({
   apiBaseUrl: string;
   requestHeadersJson: string;
   loading: boolean;
+  pickingFrontendPath: boolean;
+  pickingBackendPath: boolean;
   onNameChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
   onExecutionModeChange: (mode: ExecutionMode) => void;
+  onFrontendPathChange: (value: string) => void;
+  onBackendPathChange: (value: string) => void;
+  onPickFrontendPath: () => void;
+  onPickBackendPath: () => void;
   onFrontendEnvironmentChange: (environmentKey: string) => void;
   onApiEnvironmentChange: (environmentKey: string) => void;
   onBaseUrlChange: (value: string) => void;
@@ -294,6 +337,17 @@ export function ProjectEditModal({
             ]}
           />
         </div>
+        <ProjectRepositoryPathFields
+          executionMode={executionMode}
+          frontendPath={frontendPath}
+          backendPath={backendPath}
+          pickingFrontendPath={pickingFrontendPath}
+          pickingBackendPath={pickingBackendPath}
+          onFrontendPathChange={onFrontendPathChange}
+          onBackendPathChange={onBackendPathChange}
+          onPickFrontendPath={onPickFrontendPath}
+          onPickBackendPath={onPickBackendPath}
+        />
         <ProjectBaseUrlFields
           executionMode={executionMode}
           environments={environments}
@@ -310,6 +364,89 @@ export function ProjectEditModal({
         />
       </div>
     </Modal>
+  );
+}
+
+function ProjectRepositoryPathFields({
+  executionMode,
+  frontendPath,
+  backendPath,
+  pickingFrontendPath,
+  pickingBackendPath,
+  onFrontendPathChange,
+  onBackendPathChange,
+  onPickFrontendPath,
+  onPickBackendPath
+}: {
+  executionMode: ExecutionMode;
+  frontendPath: string;
+  backendPath: string;
+  pickingFrontendPath: boolean;
+  pickingBackendPath: boolean;
+  onFrontendPathChange: (value: string) => void;
+  onBackendPathChange: (value: string) => void;
+  onPickFrontendPath: () => void;
+  onPickBackendPath: () => void;
+}) {
+  return (
+    <>
+      <DirectoryPathControl
+        label={executionMode === 'fullstack' ? '后端项目目录' : '本地项目目录'}
+        value={backendPath}
+        placeholder="选择或输入本地项目目录"
+        picking={pickingBackendPath}
+        onValueChange={onBackendPathChange}
+        onPick={onPickBackendPath}
+      />
+      {executionMode === 'fullstack' ? (
+        <DirectoryPathControl
+          label="前端项目目录"
+          value={frontendPath}
+          placeholder="选择或输入前端项目目录"
+          picking={pickingFrontendPath}
+          onValueChange={onFrontendPathChange}
+          onPick={onPickFrontendPath}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function DirectoryPathControl({
+  label,
+  value,
+  placeholder,
+  picking,
+  onValueChange,
+  onPick
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  picking: boolean;
+  onValueChange: (value: string) => void;
+  onPick: () => void;
+}) {
+  return (
+    <div className="control-field">
+      <Text className="field-label">{label}</Text>
+      <Space.Compact className="project-path-control">
+        <Input
+          allowClear
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onValueChange(event.target.value)}
+        />
+        <Button
+          className="secondary-button"
+          icon={<FolderOpen size={16} />}
+          loading={picking}
+          onClick={onPick}
+        >
+          选择
+        </Button>
+      </Space.Compact>
+    </div>
   );
 }
 
