@@ -1,6 +1,6 @@
-import { Button, Empty, Flex, Input, List, Modal, Segmented, Space, Tag, Typography } from 'antd';
-import { FileCode2, Network, RefreshCw, Search } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Button, Empty, Flex, Input, Modal, Space, Tag, Typography } from 'antd';
+import { BarChart3, Braces, FileCode2, GitBranch, Network, RefreshCw, Route, Search } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { Project, Repository } from '../api';
 import { useProjectKnowledgeGraph } from '../hooks/useProjectKnowledgeGraph';
 import { ProjectKnowledgeGraphPanel } from './ProjectKnowledgeGraphPanel';
@@ -36,6 +36,19 @@ type RouteParameter = {
   schema?: { type?: unknown };
 };
 
+const ANALYSIS_VIEW_OPTIONS: Array<{
+  value: DetailView;
+  label: string;
+  description: string;
+  icon: ReactNode;
+}> = [
+  { value: 'overview', label: '概览', description: '项目分析摘要', icon: <BarChart3 size={16} /> },
+  { value: 'graph', label: '图谱', description: '模块、入口和链路关系', icon: <GitBranch size={16} /> },
+  { value: 'routes', label: '接口', description: '路由、参数和请求体', icon: <Route size={16} /> },
+  { value: 'dom', label: 'DOM', description: '页面目标和选择器', icon: <FileCode2 size={16} /> },
+  { value: 'raw', label: '原始', description: '完整分析 JSON', icon: <Braces size={16} /> }
+];
+
 export function ProjectAnalysisModal({
   open,
   project,
@@ -45,7 +58,6 @@ export function ProjectAnalysisModal({
   showToast
 }: ProjectAnalysisModalProps) {
   const repositories = project?.repositories ?? [];
-  const [selectedRepositoryId, setSelectedRepositoryId] = useState<string | null>(null);
   const [detailView, setDetailView] = useState<DetailView>('overview');
   const [routeSearch, setRouteSearch] = useState('');
   const {
@@ -58,19 +70,50 @@ export function ProjectAnalysisModal({
     saveKnowledgeGraph,
     approveKnowledgeGraph
   } = useProjectKnowledgeGraph({ open, project, showToast });
-
-  useEffect(() => {
-    if (!open) return;
-    setSelectedRepositoryId((current) => {
-      if (current && repositories.some((repo) => repo.id === current)) return current;
-      return repositories[0]?.id ?? null;
-    });
-  }, [open, repositories]);
-
-  const selectedRepository = useMemo(
-    () => repositories.find((repo) => repo.id === selectedRepositoryId) ?? repositories[0],
-    [repositories, selectedRepositoryId]
+  const routeTotal = useMemo(
+    () => repositories.reduce((total, repo) => total + (indexSummary(repo).routes?.length ?? 0), 0),
+    [repositories]
   );
+  const domTotal = useMemo(
+    () => repositories.reduce((total, repo) => total + (indexSummary(repo).dom_targets?.length ?? 0), 0),
+    [repositories]
+  );
+  const graphModuleTotal = knowledgeGraph?.graph.modules?.length ?? 0;
+  const currentView = ANALYSIS_VIEW_OPTIONS.find((option) => option.value === detailView)
+    ?? ANALYSIS_VIEW_OPTIONS[0];
+
+  const handleSelectView = (view: DetailView) => {
+    setDetailView(view);
+    if (view !== 'routes') setRouteSearch('');
+  };
+  const viewCount = (view: DetailView): string => {
+    if (view === 'overview') return `${repositories.length} 记录`;
+    if (view === 'graph') return `${graphModuleTotal} 模块`;
+    if (view === 'routes') return `${routeTotal} 接口`;
+    if (view === 'dom') return `${domTotal} DOM`;
+    return 'JSON';
+  };
+
+  const canRenderDetail = detailView === 'graph' || repositories.length > 0;
+  const detailSubtitle = detailView === 'graph'
+    ? project?.name ?? '当前项目'
+    : `${repositories.length} 条分析记录 · ${routeTotal} 接口 · ${domTotal} DOM`;
+
+  const viewOptions = ANALYSIS_VIEW_OPTIONS.map((option) => (
+    <button
+      key={option.value}
+      type="button"
+      className={option.value === detailView ? 'analysis-view-card active' : 'analysis-view-card'}
+      onClick={() => handleSelectView(option.value)}
+    >
+      <span className="analysis-view-icon" aria-hidden="true">{option.icon}</span>
+      <span className="analysis-view-copy">
+        <Text strong>{option.label}</Text>
+        <Text className="analysis-path">{option.description}</Text>
+      </span>
+      <Tag>{viewCount(option.value)}</Tag>
+    </button>
+  ));
 
   return (
     <Modal
@@ -99,68 +142,19 @@ export function ProjectAnalysisModal({
       footer={null}
     >
       <div className="analysis-modal-layout">
-        <aside className="analysis-records" aria-label="分析记录">
+        <aside className="analysis-records" aria-label="分析视图">
           <Flex align="center" justify="space-between" className="analysis-panel-heading">
-            <Text className="field-label">分析记录</Text>
-            <Tag>{repositories.length}</Tag>
+            <Text className="field-label">选择视图</Text>
+            <Tag>{ANALYSIS_VIEW_OPTIONS.length}</Tag>
           </Flex>
-          {repositories.length ? (
-            <List
-              dataSource={repositories}
-              renderItem={(repo) => (
-                <List.Item
-                  className={repo.id === selectedRepository?.id ? 'analysis-record active' : 'analysis-record'}
-                  onClick={() => {
-                    setSelectedRepositoryId(repo.id);
-                    setDetailView('overview');
-                    setRouteSearch('');
-                  }}
-                >
-                  <Flex vertical gap={6} className="analysis-record-main">
-                    <Flex align="center" justify="space-between" gap={8}>
-                      <Text strong>{formatRepositoryKind(repo.kind)}</Text>
-                      <Tag>{analysisStatus(repo)}</Tag>
-                    </Flex>
-                    <Text className="analysis-path">{repo.path || '未配置路径'}</Text>
-                    <Space size={6} wrap>
-                      <Tag>{routeCount(repo)} 条接口</Tag>
-                      <Tag>{domTargetCount(repo)} DOM</Tag>
-                    </Space>
-                  </Flex>
-                </List.Item>
-              )}
-            />
-          ) : (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无分析记录" />
-          )}
+          <div className="analysis-view-list">{viewOptions}</div>
         </aside>
 
         <section className="analysis-detail" aria-label="分析详情">
-          {detailView === 'graph' || selectedRepository ? (
+          {canRenderDetail ? (
             <>
-              <Flex align="center" justify="space-between" gap={12} className="analysis-detail-title">
-                <div>
-                  <Title level={5}>
-                    {detailView === 'graph' ? '项目知识图谱' : formatRepositoryKind(selectedRepository.kind)}
-                  </Title>
-                  <Text className="analysis-path">
-                    {detailView === 'graph' ? project?.name ?? '当前项目' : selectedRepository.path}
-                  </Text>
-                </div>
-                <Segmented
-                  value={detailView}
-                  onChange={(value) => setDetailView(value as DetailView)}
-                  options={[
-                    { value: 'overview', label: '概览' },
-                    { value: 'graph', label: '图谱' },
-                    { value: 'routes', label: '接口' },
-                    { value: 'dom', label: 'DOM' },
-                    { value: 'raw', label: '原始' }
-                  ]}
-                />
-              </Flex>
               <AnalysisDetailContent
-                repository={selectedRepository}
+                repositories={repositories}
                 view={detailView}
                 routeSearch={routeSearch}
                 onRouteSearchChange={setRouteSearch}
@@ -184,7 +178,7 @@ export function ProjectAnalysisModal({
 }
 
 function AnalysisDetailContent({
-  repository,
+  repositories,
   view,
   routeSearch,
   onRouteSearchChange,
@@ -197,7 +191,7 @@ function AnalysisDetailContent({
   onSaveKnowledgeGraph,
   onApproveKnowledgeGraph
 }: {
-  repository?: Repository;
+  repositories: Repository[];
   view: DetailView;
   routeSearch: string;
   onRouteSearchChange: (value: string) => void;
@@ -213,10 +207,17 @@ function AnalysisDetailContent({
   ) => void;
   onApproveKnowledgeGraph: () => void;
 }) {
-  const summary = repository ? indexSummary(repository) : {};
-  const routes = summary.routes ?? [];
-  const domTargets = summary.dom_targets ?? [];
-  const signals = summary.signals ?? [];
+  const summaries = useMemo(() => repositories.map(indexSummary), [repositories]);
+  const routes = useMemo(() => summaries.flatMap((summary) => summary.routes ?? []), [summaries]);
+  const domTargets = useMemo(() => summaries.flatMap((summary) => summary.dom_targets ?? []), [summaries]);
+  const signals = useMemo(
+    () => Array.from(new Set(summaries.flatMap((summary) => summary.signals ?? []))),
+    [summaries]
+  );
+  const files = useMemo(
+    () => Array.from(new Set(summaries.flatMap((summary) => summary.files ?? []))),
+    [summaries]
+  );
   const filteredRoutes = useMemo(
     () => filterRoutes(routes, routeSearch),
     [routes, routeSearch]
@@ -237,8 +238,8 @@ function AnalysisDetailContent({
     );
   }
 
-  if (!repository) {
-    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择一条分析记录查看详情" />;
+  if (!repositories.length) {
+    return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无分析记录" />;
   }
 
   if (view === 'routes') {
@@ -293,7 +294,11 @@ function AnalysisDetailContent({
   if (view === 'raw') {
     return (
       <pre className="analysis-raw-json">
-        {JSON.stringify(repository.index_summary ?? {}, null, 2)}
+        {JSON.stringify(repositories.map((repo) => ({
+          kind: repo.kind,
+          path: repo.path,
+          index_summary: repo.index_summary ?? {}
+        })), null, 2)}
       </pre>
     );
   }
@@ -302,11 +307,11 @@ function AnalysisDetailContent({
     <div className="analysis-overview-grid">
       <Metric label="接口路由" value={routes.length} />
       <Metric label="DOM 目标" value={domTargets.length} />
-      <Metric label="扫描文件" value={(summary.files ?? []).length} />
-      <Metric label="分析状态" value={summary.exists === false ? '路径不可用' : '可用'} />
+      <Metric label="扫描文件" value={files.length} />
+      <Metric label="分析状态" value={analysisStatusForSummaries(summaries)} />
       <div className="analysis-overview-wide">
         <Text className="field-label">最近分析</Text>
-        <Text>{formatAnalyzedAt(summary.analysis)}</Text>
+        <Text>{formatLatestAnalyzedAt(summaries)}</Text>
       </div>
       <div className="analysis-overview-wide">
         <Text className="field-label">关键信号</Text>
@@ -444,25 +449,22 @@ function formatParameterTag(parameter: RouteParameter): string {
   return `${location} ${name}${required}`;
 }
 
-function routeCount(repository: Repository): number {
-  return indexSummary(repository).routes?.length ?? 0;
+function analysisStatusForSummaries(summaries: IndexSummary[]): string {
+  if (!summaries.length) return '暂无记录';
+  if (summaries.some((summary) => summary.exists === false)) return '部分路径不可用';
+  return summaries.some((summary) => summary.analysis || summary.routes?.length || summary.dom_targets?.length)
+    ? '可用'
+    : '未分析';
 }
 
-function domTargetCount(repository: Repository): number {
-  return indexSummary(repository).dom_targets?.length ?? 0;
-}
-
-function analysisStatus(repository: Repository): string {
-  return repository.index_summary ? '已分析' : '未分析';
-}
-
-function formatRepositoryKind(kind: string): string {
-  const map: Record<string, string> = {
-    workspace: '工作区',
-    frontend: '前端',
-    backend: '后端'
-  };
-  return map[kind] ?? kind;
+function formatLatestAnalyzedAt(summaries: IndexSummary[]): string {
+  const latest = summaries
+    .map((summary) => summary.analysis?.analyzed_at)
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => ({ value, time: Date.parse(value) }))
+    .filter((item) => Number.isFinite(item.time))
+    .sort((left, right) => right.time - left.time)[0];
+  return latest ? formatAnalyzedAt({ analyzed_at: latest.value }) : '暂无记录';
 }
 
 function formatAnalyzedAt(analysis: Record<string, unknown> | undefined): string {

@@ -8,6 +8,7 @@ import type {
   KnowledgeGraphRoute,
   ProjectKnowledgeGraph
 } from '../types/projectKnowledgeGraph';
+import { KnowledgeGraphRouteSearch } from './KnowledgeGraphRouteSearch';
 import './projectKnowledgeGraph.css';
 
 const { Paragraph, Text, Title } = Typography;
@@ -138,6 +139,12 @@ export function ProjectKnowledgeGraphPanel({
       </Flex>
 
       {error ? <Alert className="knowledge-graph-alert" type="warning" showIcon message={error} /> : null}
+
+      <KnowledgeGraphRouteSearch
+        modules={modules}
+        selectedModuleId={selectedModule?.id ?? null}
+        onSelectModule={handleSelectModule}
+      />
 
       <div className="knowledge-graph-layout">
         <aside className="knowledge-graph-column" aria-label="模块树">
