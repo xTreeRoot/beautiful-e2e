@@ -209,34 +209,39 @@ function DomModuleList({
             <Tag>{repository.fileCount} 页面/组件</Tag>
           </Flex>
           <div className="dom-module-button-list">
-            {repository.files.map((module) => (
-              <button
-                key={module.id}
-                type="button"
-                data-module-type={module.moduleType}
-                className={module.id === selectedModuleId ? 'dom-module-card active' : 'dom-module-card'}
-                onClick={() => onSelectModule(module)}
-              >
-                <span className="dom-card-icon" aria-hidden="true"><Boxes size={15} /></span>
-                <span className="dom-module-copy">
-                  <Text strong>{domFileName(module.path)}</Text>
-                  <Text className="analysis-path">{module.moduleName}</Text>
-                  <Space size={4} wrap className="dom-kind-tags">
-                    <Tag color={module.moduleType === 'page' ? 'blue' : undefined}>
-                      {module.moduleType === 'page' ? '页面' : '组件'}
-                    </Tag>
-                    <CompileStatusTag module={module} />
-                    <Tag>{entrypointTargetsForModule(module).length} 入口</Tag>
-                    <Tag>{module.targetCount} 目标</Tag>
-                    {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 组件</Tag> : null}
-                    {module.relatedApiRoutes.length ? <Tag color="purple">{module.relatedApiRoutes.length} 接口</Tag> : null}
-                    {domKindEntries(module.kindCounts).slice(0, 2).map(([kind, count]) => (
-                      <Tag key={kind}>{domKindLabel(kind)} {count}</Tag>
-                    ))}
-                  </Space>
-                </span>
-              </button>
-            ))}
+            {repository.files.map((module) => {
+              const displayPath = domModuleDisplayPath(module);
+              return (
+                <button
+                  key={module.id}
+                  type="button"
+                  data-module-type={module.moduleType}
+                  className={module.id === selectedModuleId ? 'dom-module-card active' : 'dom-module-card'}
+                  onClick={() => onSelectModule(module)}
+                >
+                  <span className="dom-card-icon" aria-hidden="true"><Boxes size={15} /></span>
+                  <span className="dom-module-copy">
+                    <Text strong>{domModuleTitle(module)}</Text>
+                    <Tooltip title={displayPath}>
+                      <Text className="dom-module-path">{displayPath}</Text>
+                    </Tooltip>
+                    <Space size={4} wrap className="dom-kind-tags">
+                      <Tag color={module.moduleType === 'page' ? 'blue' : undefined}>
+                        {module.moduleType === 'page' ? '页面' : '组件'}
+                      </Tag>
+                      <CompileStatusTag module={module} />
+                      <Tag>{entrypointTargetsForModule(module).length} 入口</Tag>
+                      <Tag>{module.targetCount} 目标</Tag>
+                      {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 组件</Tag> : null}
+                      {module.relatedApiRoutes.length ? <Tag color="purple">{module.relatedApiRoutes.length} 接口</Tag> : null}
+                      {domKindEntries(module.kindCounts).slice(0, 2).map(([kind, count]) => (
+                        <Tag key={kind}>{domKindLabel(kind)} {count}</Tag>
+                      ))}
+                    </Space>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       ))}
@@ -489,6 +494,14 @@ function DomTargetDetailCard({ target }: { target: DomTargetNode }) {
 
 function CompileStatusTag({ module }: { module: DomFileGroup }) {
   return module.isCompiled ? <Tag color="success">已编译</Tag> : <Tag>未编译</Tag>;
+}
+
+function domModuleTitle(module: DomFileGroup): string {
+  return module.moduleName || domFileName(module.path);
+}
+
+function domModuleDisplayPath(module: DomFileGroup): string {
+  return module.path || module.source || module.pagePath || module.moduleName;
 }
 
 function DomTargetCardList({

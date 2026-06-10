@@ -118,6 +118,19 @@
   min-width: 0;
 }
 
+.dom-module-path.ant-typography {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  color: #5f6b7a;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .dom-module-button-list,
 .dom-card-section,
 .dom-target-card-list,
