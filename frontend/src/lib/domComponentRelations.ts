@@ -71,7 +71,12 @@ function componentTokens(value: string): string[] {
     ...parts,
     parts[parts.length - 1] === 'index' ? parts[parts.length - 2] : ''
   ];
-  return uniqueStrings(candidates.map(canonicalComponentToken).filter(Boolean));
+  return uniqueStrings(
+    candidates
+      .filter((candidate): candidate is string => Boolean(candidate))
+      .map(canonicalComponentToken)
+      .filter(Boolean)
+  );
 }
 
 function canonicalComponentToken(value: string): string {
