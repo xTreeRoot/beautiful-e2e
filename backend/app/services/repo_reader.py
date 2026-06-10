@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Iterator
 
+from app.services.dom_project_analyzer import DomProjectAnalyzer, merge_dom_modules
 from app.services.java_spring_contracts import JavaSpringContractExtractor
 from app.services.openapi_routes import OpenApiRouteExtractor
 
@@ -30,6 +31,8 @@ SIGNAL_EXTENSIONS = {
     ".ts",
     ".tsx",
     ".vue",
+    ".wxml",
+    ".axml",
     ".svelte",
     ".py",
     ".java",
@@ -77,6 +80,7 @@ class RepoSummary:
     signals: list[str]
     routes: list[dict[str, Any]] = field(default_factory=list)
     dom_targets: list[dict[str, Any]] = field(default_factory=list)
+    dom_modules: list[dict[str, Any]] = field(default_factory=list)
     auth_profile: dict[str, Any] | None = None
     analysis: dict[str, Any] | None = None
     scan: dict[str, Any] | None = None
@@ -89,6 +93,7 @@ class RepoSummary:
             "signals": self.signals,
             "routes": self.routes,
             "dom_targets": self.dom_targets,
+            "dom_modules": self.dom_modules,
         }
         if self.auth_profile:
             data["auth_profile"] = self.auth_profile
@@ -109,6 +114,7 @@ class RepoSummary:
             signals=[str(item) for item in value.get("signals", []) if isinstance(item, str)],
             routes=[item for item in value.get("routes", []) if isinstance(item, dict)],
             dom_targets=[item for item in value.get("dom_targets", []) if isinstance(item, dict)],
+            dom_modules=[item for item in value.get("dom_modules", []) if isinstance(item, dict)],
             auth_profile=value.get("auth_profile") if isinstance(value.get("auth_profile"), dict) else None,
             analysis=value.get("analysis") if isinstance(value.get("analysis"), dict) else None,
             scan=value.get("scan") if isinstance(value.get("scan"), dict) else None,
@@ -121,14 +127,17 @@ class RepoReader:
         max_files: int = 160,
         max_routes: int = 2000,
         max_dom_targets: int = 600,
+        max_dom_modules: int = 600,
         max_scan_files: int = 12000,
     ) -> None:
         self.max_files = max_files
         self.max_routes = max_routes
         self.max_dom_targets = max_dom_targets
+        self.max_dom_modules = max_dom_modules
         self.max_scan_files = max_scan_files
         self.openapi_extractor = OpenApiRouteExtractor()
         self.spring_contract_extractor = JavaSpringContractExtractor()
+        self.dom_project_analyzer = DomProjectAnalyzer()
 
     def summarize(self, raw_path: str | None) -> RepoSummary:
         if not raw_path:
@@ -138,6 +147,7 @@ class RepoReader:
                 files=[],
                 signals=[],
                 routes=[],
+                dom_modules=[],
                 scan=self._empty_scan(),
             )
 
@@ -149,6 +159,7 @@ class RepoReader:
                 files=[],
                 signals=[],
                 routes=[],
+                dom_modules=[],
                 scan=self._empty_scan(),
             )
 
@@ -156,6 +167,7 @@ class RepoReader:
         signals: list[str] = []
         routes_by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
         dom_targets_by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        dom_modules_by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
         scanned_count = 0
 
         for scanned_count, file_path in enumerate(self._iter_files(path), start=1):
@@ -173,6 +185,9 @@ class RepoReader:
 
             if self._should_collect_dom_targets(group_key, dom_targets_by_group):
                 dom_targets_by_group[group_key].extend(self._extract_dom_targets(file_path, rel))
+            dom_modules = self.dom_project_analyzer.extract_modules(file_path, rel, path)
+            if dom_modules:
+                dom_modules_by_group[group_key].extend(dom_modules)
 
         merged_routes_by_group = {
             group_key: self._merge_duplicate_routes(routes)
@@ -182,6 +197,14 @@ class RepoReader:
         routes = self._select_fair_items(merged_routes_by_group, self.max_routes)
         discovered_dom_target_count = sum(len(targets) for targets in dom_targets_by_group.values())
         dom_targets = self._select_fair_items(dom_targets_by_group, self.max_dom_targets)
+        merged_dom_modules = merge_dom_modules(
+            [module for modules in dom_modules_by_group.values() for module in modules]
+        )
+        merged_dom_modules_by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for module in merged_dom_modules:
+            merged_dom_modules_by_group[self._dom_module_group_key(module)].append(module)
+        discovered_dom_module_count = sum(len(modules) for modules in merged_dom_modules_by_group.values())
+        dom_modules = self._select_fair_items(merged_dom_modules_by_group, self.max_dom_modules)
         scan = self._scan_stats(
             scanned_file_count=scanned_count,
             file_count=len(files),
@@ -189,7 +212,15 @@ class RepoReader:
             discovered_route_count=discovered_route_count,
             dom_target_count=len(dom_targets),
             discovered_dom_target_count=discovered_dom_target_count,
-            group_count=len({*merged_routes_by_group.keys(), *dom_targets_by_group.keys()}),
+            dom_module_count=len(dom_modules),
+            discovered_dom_module_count=discovered_dom_module_count,
+            group_count=len(
+                {
+                    *merged_routes_by_group.keys(),
+                    *dom_targets_by_group.keys(),
+                    *merged_dom_modules_by_group.keys(),
+                }
+            ),
         )
 
         return RepoSummary(
@@ -199,6 +230,7 @@ class RepoReader:
             signals=signals[:40],
             routes=self._merge_duplicate_routes(routes)[: self.max_routes],
             dom_targets=dom_targets[: self.max_dom_targets],
+            dom_modules=dom_modules[: self.max_dom_modules],
             scan=scan,
         )
 
@@ -233,6 +265,13 @@ class RepoReader:
         if len(rel_parts) <= 1:
             return ""
         return rel_parts[0]
+
+    def _dom_module_group_key(self, module: dict[str, Any]) -> str:
+        source_file = str(module.get("source_file") or module.get("source") or "").strip()
+        parts = [part for part in source_file.replace("\\", "/").split("/") if part]
+        if len(parts) <= 1:
+            return ""
+        return parts[0]
 
     def _module_root_for_file(self, root: Path, file_path: Path) -> Path | None:
         """找到文件所属的最近构建模块，用于多模块仓库公平扫描。"""
@@ -364,7 +403,7 @@ class RepoReader:
 
     def _extract_dom_targets(self, file_path: Path, rel: str) -> list[dict[str, Any]]:
         suffix = file_path.suffix.lower()
-        if suffix not in {".html", ".vue", ".svelte", ".jsx", ".tsx", ".js", ".ts"}:
+        if suffix not in {".html", ".vue", ".svelte", ".jsx", ".tsx", ".js", ".ts", ".wxml", ".axml"}:
             return []
 
         try:
@@ -622,6 +661,8 @@ class RepoReader:
             discovered_route_count=0,
             dom_target_count=0,
             discovered_dom_target_count=0,
+            dom_module_count=0,
+            discovered_dom_module_count=0,
             group_count=0,
         )
 
@@ -634,6 +675,8 @@ class RepoReader:
         discovered_route_count: int,
         dom_target_count: int,
         discovered_dom_target_count: int,
+        dom_module_count: int,
+        discovered_dom_module_count: int,
         group_count: int,
     ) -> dict[str, Any]:
         """汇总扫描覆盖率，供界面解释“图谱是否来自完整扫描”。"""
@@ -645,14 +688,18 @@ class RepoReader:
             "discovered_route_count": discovered_route_count,
             "dom_target_count": dom_target_count,
             "discovered_dom_target_count": discovered_dom_target_count,
+            "dom_module_count": dom_module_count,
+            "discovered_dom_module_count": discovered_dom_module_count,
             "scan_group_count": group_count,
             "max_indexed_files": self.max_files,
             "max_routes": self.max_routes,
             "max_dom_targets": self.max_dom_targets,
+            "max_dom_modules": self.max_dom_modules,
             "max_scan_files": self.max_scan_files,
             "files_truncated": scanned_file_count > file_count,
             "routes_truncated": discovered_route_count > route_count,
             "dom_targets_truncated": discovered_dom_target_count > dom_target_count,
+            "dom_modules_truncated": discovered_dom_module_count > dom_module_count,
             "scan_truncated": False,
         }
 

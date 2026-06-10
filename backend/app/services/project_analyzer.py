@@ -83,7 +83,8 @@ class ProjectAnalyzer:
                     f"遍历 {scan.get('scanned_file_count', len(summary.files))} 个可识别文件，"
                     f"发现 {scan.get('discovered_route_count', len(summary.routes))} 条接口，"
                     f"入库 {len(summary.files)} 个文件摘要、{len(summary.routes)} 条接口、"
-                    f"{len(summary.dom_targets)} 个 DOM 目标{route_suffix}。"
+                    f"{len(summary.dom_targets)} 个 DOM 目标、{len(summary.dom_modules)} 个页面/组件模块"
+                    f"{route_suffix}。"
                 ),
                 "stage": "repo_scan_done",
                 "repository_kind": kind,
@@ -93,15 +94,21 @@ class ProjectAnalyzer:
                 "route_count": len(summary.routes),
                 "discovered_route_count": scan.get("discovered_route_count", len(summary.routes)),
                 "dom_target_count": len(summary.dom_targets),
+                "dom_module_count": len(summary.dom_modules),
                 "discovered_dom_target_count": scan.get(
                     "discovered_dom_target_count",
                     len(summary.dom_targets),
+                ),
+                "discovered_dom_module_count": scan.get(
+                    "discovered_dom_module_count",
+                    len(summary.dom_modules),
                 ),
                 "scan_group_count": scan.get("scan_group_count", 0),
                 "scan_truncated": bool(scan.get("scan_truncated")),
                 "files_truncated": bool(scan.get("files_truncated")),
                 "routes_truncated": bool(scan.get("routes_truncated")),
                 "dom_targets_truncated": bool(scan.get("dom_targets_truncated")),
+                "dom_modules_truncated": bool(scan.get("dom_modules_truncated")),
             }
             auth_profile = analyze_repository_auth_profile(kind, summary)
             yield {
@@ -269,6 +276,7 @@ class ProjectAnalyzer:
                     [route for route in summary.routes if isinstance(route.get("parameters"), list)]
                 ),
                 "dom_target_count": len(summary.dom_targets),
+                "dom_module_count": len(summary.dom_modules),
                 "scan": summary.scan or {},
             }
         )

@@ -1,12 +1,19 @@
-import { Button, Empty, Flex, Input, Modal, Space, Tag, Typography } from 'antd';
+import { Button, Empty, Flex, Input, Modal, Tag, Typography } from 'antd';
 import { BarChart3, Braces, FileCode2, GitBranch, Network, RefreshCw, Route, Search } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
-import type { Project, Repository } from '../api';
+import {
+  api,
+  type DomModuleCompileMode,
+  type DomModuleCompileStreamEvent,
+  type Project,
+  type Repository
+} from '../api';
 import { useProjectKnowledgeGraph } from '../hooks/useProjectKnowledgeGraph';
+import type { DomCompileProgressState, DomFileGroup } from '../lib/domTargetGraph';
 import { ProjectDomGraphPanel } from './ProjectDomGraphPanel';
 import { ProjectKnowledgeGraphPanel } from './ProjectKnowledgeGraphPanel';
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 type DetailView = 'overview' | 'graph' | 'routes' | 'dom' | 'raw';
 type ToastType = 'success' | 'info' | 'warning' | 'error';
@@ -17,6 +24,7 @@ type ProjectAnalysisModalProps = {
   loading: boolean;
   onClose: () => void;
   onRunAnalysis: () => void;
+  onProjectUpdated?: (project: Project) => void;
   showToast?: (type: ToastType, content: string) => void;
 };
 
@@ -24,6 +32,7 @@ type IndexSummary = {
   analysis?: Record<string, unknown>;
   routes?: Array<Record<string, unknown>>;
   dom_targets?: Array<Record<string, unknown>>;
+  dom_modules?: Array<Record<string, unknown>>;
   signals?: string[];
   files?: string[];
   exists?: boolean;
@@ -37,6 +46,8 @@ type ScanSummary = {
   discovered_route_count?: number;
   dom_target_count?: number;
   discovered_dom_target_count?: number;
+  dom_module_count?: number;
+  discovered_dom_module_count?: number;
   scan_group_count?: number;
   max_indexed_files?: number;
   max_routes?: number;
@@ -45,6 +56,7 @@ type ScanSummary = {
   files_truncated?: boolean;
   routes_truncated?: boolean;
   dom_targets_truncated?: boolean;
+  dom_modules_truncated?: boolean;
   scan_truncated?: boolean;
 };
 
@@ -65,7 +77,7 @@ const ANALYSIS_VIEW_OPTIONS: Array<{
   { value: 'overview', label: '概览', description: '项目分析摘要', icon: <BarChart3 size={16} /> },
   { value: 'graph', label: '图谱', description: '模块、入口和链路关系', icon: <GitBranch size={16} /> },
   { value: 'routes', label: '接口', description: '路由、参数和请求体', icon: <Route size={16} /> },
-  { value: 'dom', label: 'DOM', description: '页面目标和选择器', icon: <FileCode2 size={16} /> },
+  { value: 'dom', label: 'DOM 图谱', description: '页面/组件、入口和链路', icon: <FileCode2 size={16} /> },
   { value: 'raw', label: '原始', description: '完整分析 JSON', icon: <Braces size={16} /> }
 ];
 
@@ -75,11 +87,13 @@ export function ProjectAnalysisModal({
   loading,
   onClose,
   onRunAnalysis,
+  onProjectUpdated,
   showToast
 }: ProjectAnalysisModalProps) {
   const repositories = project?.repositories ?? [];
   const [detailView, setDetailView] = useState<DetailView>('overview');
   const [routeSearch, setRouteSearch] = useState('');
+  const [domCompileProgress, setDomCompileProgress] = useState<DomCompileProgressState | null>(null);
   const {
     knowledgeGraph,
     isLoadingKnowledgeGraph,
@@ -94,31 +108,67 @@ export function ProjectAnalysisModal({
     () => repositories.reduce((total, repo) => total + (indexSummary(repo).routes?.length ?? 0), 0),
     [repositories]
   );
-  const domTotal = useMemo(
-    () => repositories.reduce((total, repo) => total + (indexSummary(repo).dom_targets?.length ?? 0), 0),
+  const domModuleTotal = useMemo(
+    () => repositories.reduce((total, repo) => total + (indexSummary(repo).dom_modules?.length ?? 0), 0),
     [repositories]
   );
   const graphModuleTotal = knowledgeGraph?.graph.modules?.length ?? 0;
-  const currentView = ANALYSIS_VIEW_OPTIONS.find((option) => option.value === detailView)
-    ?? ANALYSIS_VIEW_OPTIONS[0];
 
   const handleSelectView = (view: DetailView) => {
     setDetailView(view);
     if (view !== 'routes') setRouteSearch('');
   };
+  const handleCompileDomModule = async (module: DomFileGroup, mode: DomModuleCompileMode) => {
+    if (!project) return;
+    setDomCompileProgress({
+      moduleId: module.id,
+      mode,
+      phase: 'running',
+      percent: 1,
+      message: mode === 'ai' ? '准备 AI 修复编译' : '准备静态编译'
+    });
+    try {
+      const compiled = await api.compileDomModuleStream(
+        project.id,
+        {
+          repository_id: module.repositoryId,
+          module_id: module.id,
+          mode
+        },
+        (event) => {
+          setDomCompileProgress(progressFromDomCompileEvent(module.id, mode, event));
+        }
+      );
+      onProjectUpdated?.(compiled);
+      setDomCompileProgress({
+        moduleId: module.id,
+        mode,
+        phase: 'complete',
+        percent: 100,
+        message: 'DOM 模块编译已完成'
+      });
+      showToast?.('success', mode === 'ai' ? 'AI 修复编译已完成' : '静态编译已完成');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'DOM 模块编译失败';
+      setDomCompileProgress({
+        moduleId: module.id,
+        mode,
+        phase: 'error',
+        percent: 100,
+        message
+      });
+      showToast?.('error', message);
+    }
+  };
   const viewCount = (view: DetailView): string => {
     if (view === 'overview') return `${repositories.length} 记录`;
     if (view === 'graph') return `${graphModuleTotal} 模块`;
     if (view === 'routes') return `${routeTotal} 接口`;
-    if (view === 'dom') return `${domTotal} DOM`;
+    if (view === 'dom') return `${domModuleTotal} 模块`;
     return 'JSON';
   };
 
   const canRenderDetail = detailView === 'graph' || repositories.length > 0;
-  const detailSubtitle = detailView === 'graph'
-    ? project?.name ?? '当前项目'
-    : `${repositories.length} 条分析记录 · ${routeTotal} 接口 · ${domTotal} DOM`;
-
   const viewOptions = ANALYSIS_VIEW_OPTIONS.map((option) => (
     <button
       key={option.value}
@@ -186,6 +236,8 @@ export function ProjectAnalysisModal({
                 onRebuildKnowledgeGraph={() => void rebuildKnowledgeGraph()}
                 onSaveKnowledgeGraph={(nextGraph, reviewStatus) => void saveKnowledgeGraph(nextGraph, reviewStatus)}
                 onApproveKnowledgeGraph={() => void approveKnowledgeGraph()}
+                domCompileProgress={domCompileProgress}
+                onCompileDomModule={(module, mode) => void handleCompileDomModule(module, mode)}
               />
             </>
           ) : (
@@ -209,7 +261,9 @@ function AnalysisDetailContent({
   onReloadKnowledgeGraph,
   onRebuildKnowledgeGraph,
   onSaveKnowledgeGraph,
-  onApproveKnowledgeGraph
+  onApproveKnowledgeGraph,
+  domCompileProgress,
+  onCompileDomModule
 }: {
   repositories: Repository[];
   view: DetailView;
@@ -226,10 +280,13 @@ function AnalysisDetailContent({
     reviewStatus?: string
   ) => void;
   onApproveKnowledgeGraph: () => void;
+  domCompileProgress?: DomCompileProgressState | null;
+  onCompileDomModule?: (module: DomFileGroup, mode: DomModuleCompileMode) => void;
 }) {
   const summaries = useMemo(() => repositories.map(indexSummary), [repositories]);
   const routes = useMemo(() => summaries.flatMap((summary) => summary.routes ?? []), [summaries]);
   const domTargets = useMemo(() => summaries.flatMap((summary) => summary.dom_targets ?? []), [summaries]);
+  const domModules = useMemo(() => summaries.flatMap((summary) => summary.dom_modules ?? []), [summaries]);
   const signals = useMemo(
     () => Array.from(new Set(summaries.flatMap((summary) => summary.signals ?? []))),
     [summaries]
@@ -299,7 +356,13 @@ function AnalysisDetailContent({
   }
 
   if (view === 'dom') {
-    return <ProjectDomGraphPanel repositories={repositories} />;
+    return (
+      <ProjectDomGraphPanel
+        repositories={repositories}
+        compileProgress={domCompileProgress}
+        onCompileModule={onCompileDomModule}
+      />
+    );
   }
 
   if (view === 'raw') {
@@ -318,6 +381,7 @@ function AnalysisDetailContent({
     <div className="analysis-overview-grid">
       <Metric label="接口路由" value={routes.length} />
       <Metric label="DOM 目标" value={domTargets.length} />
+      <Metric label="页面模块" value={domModules.length} />
       <Metric label="扫描文件" value={files.length} />
       <Metric label="分析状态" value={analysisStatusForSummaries(summaries)} />
       <Metric label="扫描覆盖" value={scanOverview.status} />
@@ -349,6 +413,23 @@ function AnalysisDetailContent({
       </div>
     </div>
   );
+}
+
+function progressFromDomCompileEvent(
+  moduleId: string,
+  mode: DomModuleCompileMode,
+  event: DomModuleCompileStreamEvent
+): DomCompileProgressState {
+  const percent = typeof event.percent === 'number'
+    ? Math.max(0, Math.min(100, Math.round(event.percent)))
+    : 5;
+  return {
+    moduleId,
+    mode,
+    phase: event.type === 'error' ? 'error' : event.type === 'done' || event.type === 'project' ? 'complete' : 'running',
+    percent,
+    message: typeof event.message === 'string' ? event.message : 'DOM 模块编译中'
+  };
 }
 
 function DetailRow({
@@ -459,6 +540,7 @@ function scanFlags(scans: ScanSummary[]): string[] {
   if (scans.some((scan) => scan.files_truncated)) flags.push('文件摘要已截断');
   if (scans.some((scan) => scan.routes_truncated)) flags.push('接口路由已截断');
   if (scans.some((scan) => scan.dom_targets_truncated)) flags.push('DOM 目标已截断');
+  if (scans.some((scan) => scan.dom_modules_truncated)) flags.push('页面模块已截断');
   return flags;
 }
 

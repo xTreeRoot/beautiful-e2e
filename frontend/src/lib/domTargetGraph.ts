@@ -1,4 +1,4 @@
-import type { Repository } from '../api';
+import type { DomModuleCompileMode, Repository } from '../api';
 
 export type DomTargetKind =
   | 'testid'
@@ -33,10 +33,27 @@ export type DomFileGroup = {
   repositoryKind: string;
   repositoryName: string;
   repositoryPath: string;
+  moduleName: string;
+  moduleType: 'page' | 'component';
+  pagePath: string | null;
+  source: string;
+  framework: string | null;
+  previewHtml: string | null;
+  previewSource: string | null;
+  previewStrategy: string | null;
+  evidence: string[];
   path: string;
   targetCount: number;
   kindCounts: Record<string, number>;
   targets: DomTargetNode[];
+};
+
+export type DomCompileProgressState = {
+  moduleId: string;
+  mode: DomModuleCompileMode;
+  phase: 'running' | 'complete' | 'error';
+  percent: number;
+  message: string;
 };
 
 export type DomRepositoryGroup = {
@@ -117,17 +134,31 @@ export function buildDomTargetGraph(repositories: Repository[]): DomTargetGraph 
     });
   });
 
+  const moduleRepositories = repositoriesWithDomModules(repositories, targets);
+  if (moduleRepositories.length) {
+    const moduleTargets = moduleRepositories.flatMap((repository) =>
+      repository.files.flatMap((file) => file.targets)
+    );
+    return {
+      repositories: moduleRepositories,
+      files: moduleRepositories.flatMap((repository) => repository.files),
+      targets: moduleTargets,
+      kindCounts: countKinds(moduleTargets)
+    };
+  }
+
   const repositoriesWithTargets = Array.from(repositoryMap.values())
-    .map((repository) => ({
-      ...repository,
-      fileCount: repository.files.length,
-      files: repository.files
-        .map((file) => ({
-          ...file,
-          targets: sortTargets(file.targets)
-        }))
-        .sort(compareFiles)
-    }))
+    .map((repository) => {
+      const files = repository.files.flatMap(pageModulesForFile).sort(compareFiles);
+      const repositoryTargets = files.flatMap((file) => file.targets);
+      return {
+        ...repository,
+        targetCount: repositoryTargets.length,
+        fileCount: files.length,
+        kindCounts: countKinds(repositoryTargets),
+        files
+      };
+    })
     .filter((repository) => repository.targetCount > 0)
     .sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
 
@@ -178,7 +209,8 @@ export function domKindLabel(kind: string): string {
     placeholder: '输入提示',
     name: '表单名称',
     id: '页面 ID',
-    route: '页面路由'
+    route: '页面路由',
+    module: '模块摘要'
   };
   return labels[kind] ?? 'DOM 目标';
 }
@@ -231,6 +263,15 @@ function ensureFileGroup(
     repositoryKind: repository.kind,
     repositoryName: repository.label,
     repositoryPath: repository.path,
+    moduleName: domFileName(filePath),
+    moduleType: 'component',
+    pagePath: null,
+    source: filePath,
+    framework: null,
+    previewHtml: null,
+    previewSource: null,
+    previewStrategy: null,
+    evidence: [],
     path: filePath,
     targetCount: 0,
     kindCounts: {},
@@ -265,12 +306,209 @@ function fileFromTargets(file: DomFileGroup, targets: DomTargetNode[]): DomFileG
   };
 }
 
+function pageModulesForFile(file: DomFileGroup): DomFileGroup[] {
+  const sortedTargets = sortTargets(file.targets);
+  const routeTargets = sortedTargets.filter((target) => target.kind === 'route');
+  if (!routeTargets.length) {
+    return [moduleFromTargets(file, {
+      id: file.id,
+      moduleName: domFileName(file.path),
+      moduleType: 'component',
+      pagePath: null,
+      source: file.source,
+      framework: file.framework,
+      previewHtml: file.previewHtml,
+      previewSource: file.previewSource,
+      previewStrategy: file.previewStrategy,
+      evidence: file.evidence,
+      targets: sortedTargets
+    })];
+  }
+
+  const nonRouteTargets = sortedTargets.filter((target) => target.kind !== 'route');
+  return routeTargets.map((routeTarget, index) => moduleFromTargets(file, {
+    id: `${file.id}:page:${routeTarget.value}:${routeTarget.line ?? index}`,
+    moduleName: routeTarget.value,
+    moduleType: 'page',
+    pagePath: routeTarget.value,
+    source: file.source,
+    framework: file.framework,
+    previewHtml: file.previewHtml,
+    previewSource: file.previewSource,
+    previewStrategy: file.previewStrategy,
+    evidence: file.evidence,
+    targets: sortTargets([routeTarget, ...nonRouteTargets])
+  }));
+}
+
+function moduleFromTargets(
+  file: DomFileGroup,
+  patch: Pick<
+    DomFileGroup,
+    | 'id'
+    | 'moduleName'
+    | 'moduleType'
+    | 'pagePath'
+    | 'source'
+    | 'framework'
+    | 'previewHtml'
+    | 'previewSource'
+    | 'previewStrategy'
+    | 'evidence'
+    | 'targets'
+  >
+): DomFileGroup {
+  return {
+    ...file,
+    ...patch,
+    targetCount: patch.targets.length,
+    kindCounts: countKinds(patch.targets)
+  };
+}
+
+function repositoriesWithDomModules(
+  repositories: Repository[],
+  extractedTargets: DomTargetNode[]
+): DomRepositoryGroup[] {
+  const groups = repositories
+    .map((repository) => {
+      const rawModules = domModulesFromRepository(repository);
+      if (!rawModules.length) return null;
+      const repositoryGroup = ensureRepositoryGroup(new Map(), repository);
+      const files = rawModules
+        .map((module, index) => domFileGroupFromModule(repositoryGroup, module, extractedTargets, index))
+        .filter((module): module is DomFileGroup => Boolean(module))
+        .sort(compareModules);
+      const repositoryTargets = files.flatMap((file) => file.targets);
+      return {
+        ...repositoryGroup,
+        files,
+        fileCount: files.length,
+        targetCount: repositoryTargets.length,
+        kindCounts: countKinds(repositoryTargets)
+      };
+    })
+    .filter((repository): repository is DomRepositoryGroup => Boolean(repository && repository.files.length));
+  return groups.sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+}
+
+function domFileGroupFromModule(
+  repository: DomRepositoryGroup,
+  rawModule: Record<string, unknown>,
+  extractedTargets: DomTargetNode[],
+  index: number
+): DomFileGroup | null {
+  const moduleType = cleanText(rawModule.kind) === 'page' ? 'page' : 'component';
+  const source = cleanText(rawModule.source);
+  const sourceFile = cleanText(rawModule.source_file) || parseSourceLocation(source).filePath;
+  const route = cleanText(rawModule.route) || null;
+  const name = cleanText(rawModule.name) || route || domFileName(sourceFile || source || `module-${index + 1}`);
+  const rawPreview = rawModule.preview && typeof rawModule.preview === 'object'
+    ? rawModule.preview as Record<string, unknown>
+    : {};
+  const matchedTargets = extractedTargets.filter((target) => {
+    if (target.repositoryId !== repository.id || !sourceFile || target.filePath !== sourceFile) return false;
+    if (moduleType === 'component') return true;
+    return target.kind !== 'route' || !route || target.value === route;
+  });
+  const routeTarget = route
+    ? syntheticTargetFromModule(repository, {
+      index,
+      kind: 'route',
+      value: route,
+      source: source || sourceFile,
+      sourceFile,
+      hint: name
+    })
+    : null;
+  const targets = sortTargets([
+    ...(routeTarget ? [routeTarget] : []),
+    ...matchedTargets.filter((target) => !routeTarget || target.id !== routeTarget.id)
+  ]);
+  const finalTargets = targets.length
+    ? targets
+    : [syntheticTargetFromModule(repository, {
+      index,
+      kind: 'module',
+      value: name,
+      source: source || sourceFile,
+      sourceFile,
+      hint: evidenceFromModule(rawModule)[0] ?? ''
+    })];
+  return {
+    id: cleanText(rawModule.id) || `${repository.id}:dom-module:${index}`,
+    repositoryId: repository.id,
+    repositoryKind: repository.kind,
+    repositoryName: repository.label,
+    repositoryPath: repository.path,
+    moduleName: name,
+    moduleType,
+    pagePath: route,
+    source: source || sourceFile,
+    framework: cleanText(rawModule.framework) || null,
+    previewHtml: cleanText(rawPreview.html) || null,
+    previewSource: cleanText(rawPreview.source_file) || null,
+    previewStrategy: cleanText(rawPreview.strategy) || null,
+    evidence: evidenceFromModule(rawModule),
+    path: sourceFile || source || name,
+    targetCount: finalTargets.length,
+    kindCounts: countKinds(finalTargets),
+    targets: finalTargets
+  };
+}
+
+function syntheticTargetFromModule(
+  repository: DomRepositoryGroup,
+  options: {
+    index: number;
+    kind: string;
+    value: string;
+    source: string;
+    sourceFile: string;
+    hint: string;
+  }
+): DomTargetNode {
+  const sourceLocation = parseSourceLocation(options.source);
+  const filePath = options.sourceFile || sourceLocation.filePath || '系统编译模块';
+  return {
+    id: `${repository.id}:synthetic:${options.kind}:${options.value}:${options.index}`,
+    repositoryId: repository.id,
+    repositoryKind: repository.kind,
+    repositoryName: repository.label,
+    repositoryPath: repository.path,
+    fileId: `${repository.id}:${filePath}`,
+    filePath,
+    line: sourceLocation.line,
+    kind: options.kind,
+    kindLabel: domKindLabel(options.kind),
+    value: options.value,
+    hint: options.hint,
+    source: options.source,
+    locator: locatorForDomTarget(options.kind, options.value),
+    stability: stabilityForDomKind(options.kind)
+  };
+}
+
 function domTargetsFromRepository(repository: Repository): Array<Record<string, unknown>> {
   const summary = repository.index_summary;
   if (!summary || typeof summary !== 'object') return [];
   const targets = (summary as { dom_targets?: unknown }).dom_targets;
   if (!Array.isArray(targets)) return [];
   return targets.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'));
+}
+
+function domModulesFromRepository(repository: Repository): Array<Record<string, unknown>> {
+  const summary = repository.index_summary;
+  if (!summary || typeof summary !== 'object') return [];
+  const modules = (summary as { dom_modules?: unknown }).dom_modules;
+  if (!Array.isArray(modules)) return [];
+  return modules.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'));
+}
+
+function evidenceFromModule(rawModule: Record<string, unknown>): string[] {
+  const evidence = rawModule.evidence;
+  if (!Array.isArray(evidence)) return [];
+  return evidence.map((item) => String(item ?? '').trim()).filter(Boolean);
 }
 
 function parseSourceLocation(source: string): SourceLocation {
@@ -348,6 +586,11 @@ function sortTargets(targets: DomTargetNode[]): DomTargetNode[] {
 
 function compareFiles(left: DomFileGroup, right: DomFileGroup): number {
   return right.targetCount - left.targetCount || left.path.localeCompare(right.path, 'zh-CN');
+}
+
+function compareModules(left: DomFileGroup, right: DomFileGroup): number {
+  if (left.moduleType !== right.moduleType) return left.moduleType === 'page' ? -1 : 1;
+  return left.moduleName.localeCompare(right.moduleName, 'zh-CN') || compareFiles(left, right);
 }
 
 function countKinds(targets: DomTargetNode[]): Record<string, number> {

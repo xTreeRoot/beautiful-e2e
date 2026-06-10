@@ -14,6 +14,7 @@ from app.services.ai import available_provider_names
 AI_USAGE_PROJECT_ANALYSIS = "project_analysis"
 AI_USAGE_DSL_GENERATION = "dsl_generation"
 AI_USAGE_API_RUNTIME = "api_runtime"
+AI_USAGE_DOM_COMPILATION = "dom_compilation"
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,11 @@ AI_USAGE_OPTIONS: tuple[AiUsageOption, ...] = (
         key=AI_USAGE_API_RUNTIME,
         label="接口运行辅助测试",
         description="接口运行时推导缺失变量和响应字段时使用的 AI。",
+    ),
+    AiUsageOption(
+        key=AI_USAGE_DOM_COMPILATION,
+        label="DOM 页面编译/修复",
+        description="把前端源码证据修复编译成系统内可预览页面草图时使用的 AI。",
     ),
 )
 VALID_AI_USAGE_KEYS = {option.key for option in AI_USAGE_OPTIONS}

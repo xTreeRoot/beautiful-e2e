@@ -126,12 +126,28 @@ export type ProjectAnalysisStreamEvent = {
   discovered_route_count?: number;
   dom_target_count?: number;
   discovered_dom_target_count?: number;
+  dom_module_count?: number;
+  discovered_dom_module_count?: number;
   scan_group_count?: number;
   scan_truncated?: boolean;
   files_truncated?: boolean;
   routes_truncated?: boolean;
   dom_targets_truncated?: boolean;
+  dom_modules_truncated?: boolean;
   auth_mode?: string;
+  [key: string]: unknown;
+};
+
+export type DomModuleCompileMode = 'static' | 'ai';
+
+export type DomModuleCompileStreamEvent = {
+  type: 'start' | 'progress' | 'project' | 'done' | 'error' | string;
+  message?: string;
+  stage?: string;
+  status_code?: number;
+  percent?: number;
+  mode?: DomModuleCompileMode | string;
+  project?: Project;
   [key: string]: unknown;
 };
 
@@ -375,6 +391,38 @@ async function streamCaseRun(
   );
 }
 
+async function streamDomModuleCompile(
+  projectId: string,
+  payload: {
+    repository_id: string;
+    module_id: string;
+    mode: DomModuleCompileMode;
+  },
+  onEvent?: (event: DomModuleCompileStreamEvent) => void
+): Promise<Project> {
+  let compiledProject: Project | null = null;
+
+  await streamJsonSse<DomModuleCompileStreamEvent>(
+    `${API_BASE}/projects/${projectId}/dom-modules/compile/stream`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    },
+    {
+      unsupportedMessage: '当前浏览器不支持流式 DOM 编译响应',
+      errorMessage: 'DOM 模块编译失败',
+      onEvent: (event) => {
+        onEvent?.(event);
+        if (event.type === 'project' && event.project) compiledProject = event.project;
+      }
+    }
+  );
+
+  if (!compiledProject) throw new Error('流式 DOM 编译未返回项目结果');
+  return compiledProject;
+}
+
 export const api = {
   bootstrap: () => request<Bootstrap>('/bootstrap', { method: 'POST' }),
   loadProjectWorkspace: (projectId: string) =>
@@ -401,6 +449,15 @@ export const api = {
     projectId: string,
     onEvent?: (event: ProjectAnalysisStreamEvent) => void
   ) => streamProjectAnalysis(`/projects/${projectId}/analyze/stream`, onEvent),
+  compileDomModuleStream: (
+    projectId: string,
+    payload: {
+      repository_id: string;
+      module_id: string;
+      mode: DomModuleCompileMode;
+    },
+    onEvent?: (event: DomModuleCompileStreamEvent) => void
+  ) => streamDomModuleCompile(projectId, payload, onEvent),
   getProjectKnowledgeGraph: (projectId: string) =>
     request<ProjectKnowledgeGraph>(`/projects/${projectId}/knowledge-graph`),
   rebuildProjectKnowledgeGraph: (projectId: string) =>

@@ -1,8 +1,7 @@
-import { Empty, Flex, Input, Space, Tag, Tooltip, Typography } from 'antd';
+import { Empty, Flex, Input, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import {
   Boxes,
   FileCode2,
-  FileText,
   GitBranch,
   LocateFixed,
   MousePointerClick,
@@ -12,24 +11,30 @@ import {
 } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 
-import type { Repository } from '../api';
+import type { DomModuleCompileMode, Repository } from '../api';
 import {
   buildDomTargetGraph,
   domFileName,
   domKindEntries,
   domKindLabel,
   filterDomTargetGraph,
+  type DomCompileProgressState,
   type DomFileGroup,
   type DomRepositoryGroup,
   type DomTargetNode
 } from '../lib/domTargetGraph';
+import { DomPagePreviewCard } from './DomPagePreviewCard';
 import './projectDomGraph.css';
 
 const { Paragraph, Text, Title } = Typography;
 
 type ProjectDomGraphPanelProps = {
   repositories: Repository[];
+  compileProgress?: DomCompileProgressState | null;
+  onCompileModule?: (module: DomFileGroup, mode: DomModuleCompileMode) => void;
 };
+
+type ModuleKindTab = 'page' | 'component';
 
 type DomRelationship = {
   id: string;
@@ -38,15 +43,28 @@ type DomRelationship = {
   reason: string;
 };
 
-export function ProjectDomGraphPanel({ repositories }: ProjectDomGraphPanelProps) {
+export function ProjectDomGraphPanel({
+  repositories,
+  compileProgress,
+  onCompileModule
+}: ProjectDomGraphPanelProps) {
   const [keyword, setKeyword] = useState('');
+  const [moduleTab, setModuleTab] = useState<ModuleKindTab>('page');
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const graph = useMemo(() => buildDomTargetGraph(repositories), [repositories]);
   const visibleGraph = useMemo(() => filterDomTargetGraph(graph, keyword), [graph, keyword]);
+  const visibleModules = useMemo(
+    () => visibleGraph.files.filter((file) => file.moduleType === moduleTab),
+    [moduleTab, visibleGraph.files]
+  );
+  const visibleRepositories = useMemo(
+    () => repositoriesForFiles(visibleGraph.repositories, visibleModules),
+    [visibleGraph.repositories, visibleModules]
+  );
   const selectedModule = useMemo(
-    () => visibleGraph.files.find((file) => file.id === selectedModuleId) ?? visibleGraph.files[0] ?? null,
-    [selectedModuleId, visibleGraph.files]
+    () => visibleModules.find((file) => file.id === selectedModuleId) ?? visibleModules[0] ?? null,
+    [selectedModuleId, visibleModules]
   );
   const selectedTarget = useMemo(
     () => (
@@ -83,23 +101,51 @@ export function ProjectDomGraphPanel({ repositories }: ProjectDomGraphPanelProps
           onChange={(event) => setKeyword(event.target.value)}
         />
         <Space size={8} wrap className="dom-graph-summary">
-          <Tag>{visibleGraph.files.length} 模块</Tag>
+          <Tag>{visibleGraph.files.length} 页面/组件</Tag>
           <Tag>{visibleGraph.targets.length} / {graph.targets.length} 目标</Tag>
-          <Tag>{entrypointTargetsForGraph(visibleGraph.files).length} 入口</Tag>
+          <Tag>{visibleGraph.files.filter((item) => item.moduleType === 'page').length} 页面</Tag>
         </Space>
       </Flex>
 
       {visibleGraph.targets.length ? (
         <div className="dom-graph-layout">
-          <aside className="dom-graph-column" aria-label="DOM 模块">
+          <aside className="dom-graph-column" aria-label="页面模块">
             <Flex align="center" justify="space-between" className="dom-graph-column-title">
-              <Text className="field-label">DOM 模块</Text>
-              <Tag>{visibleGraph.files.length}</Tag>
+              <Text className="field-label">页面模块</Text>
+              <Tag>{visibleModules.length}</Tag>
             </Flex>
-            <DomModuleList
-              repositories={visibleGraph.repositories}
-              selectedModuleId={selectedModule?.id ?? null}
-              onSelectModule={handleSelectModule}
+            <Tabs
+              className="dom-module-tabs"
+              activeKey={moduleTab}
+              onChange={(key) => {
+                setModuleTab(key as ModuleKindTab);
+                setSelectedModuleId(null);
+                setSelectedTargetId(null);
+              }}
+              items={[
+                {
+                  key: 'page',
+                  label: `页面 ${visibleGraph.files.filter((file) => file.moduleType === 'page').length}`,
+                  children: (
+                    <DomModuleList
+                      repositories={visibleRepositories}
+                      selectedModuleId={selectedModule?.id ?? null}
+                      onSelectModule={handleSelectModule}
+                    />
+                  )
+                },
+                {
+                  key: 'component',
+                  label: `组件 ${visibleGraph.files.filter((file) => file.moduleType === 'component').length}`,
+                  children: (
+                    <DomModuleList
+                      repositories={visibleRepositories}
+                      selectedModuleId={selectedModule?.id ?? null}
+                      onSelectModule={handleSelectModule}
+                    />
+                  )
+                }
+              ]}
             />
           </aside>
 
@@ -124,6 +170,8 @@ export function ProjectDomGraphPanel({ repositories }: ProjectDomGraphPanelProps
               module={selectedModule}
               target={selectedTarget}
               onSelectTarget={setSelectedTargetId}
+              compileProgress={compileProgress}
+              onCompileModule={onCompileModule}
             />
           </section>
         </div>
@@ -152,21 +200,25 @@ function DomModuleList({
               <Text strong>{repository.label}</Text>
               <Text className="analysis-path">{repository.kind}</Text>
             </Flex>
-            <Tag>{repository.fileCount} 模块</Tag>
+            <Tag>{repository.fileCount} 页面/组件</Tag>
           </Flex>
           <div className="dom-module-button-list">
             {repository.files.map((module) => (
               <button
                 key={module.id}
                 type="button"
+                data-module-type={module.moduleType}
                 className={module.id === selectedModuleId ? 'dom-module-card active' : 'dom-module-card'}
                 onClick={() => onSelectModule(module)}
               >
                 <span className="dom-card-icon" aria-hidden="true"><Boxes size={15} /></span>
                 <span className="dom-module-copy">
                   <Text strong>{domFileName(module.path)}</Text>
-                  <Text className="analysis-path">{module.path}</Text>
+                  <Text className="analysis-path">{module.moduleName}</Text>
                   <Space size={4} wrap className="dom-kind-tags">
+                    <Tag color={module.moduleType === 'page' ? 'blue' : undefined}>
+                      {module.moduleType === 'page' ? '页面' : '组件'}
+                    </Tag>
                     <Tag>{entrypointTargetsForModule(module).length} 入口</Tag>
                     <Tag>{module.targetCount} 目标</Tag>
                     {domKindEntries(module.kindCounts).slice(0, 2).map(([kind, count]) => (
@@ -202,8 +254,8 @@ function DomRelationshipPanel({
   return (
     <div className="dom-relationship-scroll">
       <div className="dom-scope-strip">
-        <Text className="analysis-path">当前 DOM 模块</Text>
-        <Text strong>{domFileName(module.path)}</Text>
+        <Text className="analysis-path">当前页面模块</Text>
+        <Text strong>{module.moduleName}</Text>
         <Text className="analysis-path">{module.path}</Text>
       </div>
 
@@ -314,11 +366,15 @@ function DomRelationshipCard({
 function DomEvidencePanel({
   module,
   target,
-  onSelectTarget
+  onSelectTarget,
+  compileProgress,
+  onCompileModule
 }: {
   module: DomFileGroup | null;
   target: DomTargetNode | null;
   onSelectTarget: (targetId: string) => void;
+  compileProgress?: DomCompileProgressState | null;
+  onCompileModule?: (module: DomFileGroup, mode: DomModuleCompileMode) => void;
 }) {
   if (!module) {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无证据" />;
@@ -332,16 +388,27 @@ function DomEvidencePanel({
   return (
     <div className="dom-evidence-scroll">
       <div className="dom-module-summary-card">
-        <Title level={5}>{domFileName(module.path)}</Title>
+        <Title level={5}>{module.moduleName}</Title>
         <Paragraph className="dom-card-note">
-          该模块由同一源码文件内的 DOM 目标归并而来，入口优先取页面路由、测试标识和可访问标签。
+          {module.moduleType === 'page'
+            ? '该模块由页面入口证据归并而来，渲染预览来自系统内静态 DOM 草图。'
+            : '该模块暂未发现页面路由，先按源码组件归并，后续可由页面渲染结果继续合并。'}
         </Paragraph>
         <Space size={6} wrap>
           <Tag>{module.repositoryName}</Tag>
+          <Tag color={module.moduleType === 'page' ? 'blue' : undefined}>
+            {module.moduleType === 'page' ? '页面模块' : '组件模块'}
+          </Tag>
           <Tag>{module.targetCount} DOM 目标</Tag>
           <Tag>{entrypointTargetsForModule(module).length} 入口候选</Tag>
         </Space>
       </div>
+
+      <DomPagePreviewCard
+        module={module}
+        compileProgress={compileProgress}
+        onCompile={onCompileModule ? (mode) => onCompileModule(module, mode) : undefined}
+      />
 
       {target ? <DomTargetDetailCard target={target} /> : null}
 
@@ -450,10 +517,6 @@ function Fact({
   );
 }
 
-function entrypointTargetsForGraph(modules: DomFileGroup[]): DomTargetNode[] {
-  return modules.flatMap(entrypointTargetsForModule);
-}
-
 function entrypointTargetsForModule(module: DomFileGroup | null): DomTargetNode[] {
   if (!module) return [];
   const entryKinds = new Set(['route', 'testid', 'aria-label']);
@@ -502,4 +565,23 @@ function stabilityLabel(stability: DomTargetNode['stability']): string {
   if (stability === 'high') return '稳定优先';
   if (stability === 'medium') return '可用候选';
   return '弱候选';
+}
+
+function repositoriesForFiles(
+  repositories: DomRepositoryGroup[],
+  files: DomFileGroup[]
+): DomRepositoryGroup[] {
+  const fileIds = new Set(files.map((file) => file.id));
+  return repositories
+    .map((repository) => {
+      const repositoryFiles = repository.files.filter((file) => fileIds.has(file.id));
+      const targets = repositoryFiles.flatMap((file) => file.targets);
+      return {
+        ...repository,
+        files: repositoryFiles,
+        fileCount: repositoryFiles.length,
+        targetCount: targets.length
+      };
+    })
+    .filter((repository) => repository.files.length > 0);
 }

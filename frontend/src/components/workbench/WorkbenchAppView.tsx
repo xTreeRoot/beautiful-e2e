@@ -209,6 +209,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
     rerunCaseFromProgress,
     loadProjectWorkspace,
     analyzeCurrentProject,
+    applyUpdatedProject,
     addNodeFromTemplate,
     updateSelectedNode,
     deleteSelectedNode,
@@ -406,6 +407,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
         onSelectProject={(projectId) => void loadProjectWorkspace(projectId)}
         onCloseProjectAnalysis={() => setIsProjectAnalysisOpen(false)}
         onRunProjectAnalysis={() => void analyzeCurrentProject()}
+        onProjectUpdated={applyUpdatedProject}
         onCloseProjectManager={() => {
           setIsProjectManagerOpen(false);
           cancelProjectCreate();

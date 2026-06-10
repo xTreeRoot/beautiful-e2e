@@ -29,13 +29,21 @@ from app.api.common import (
 from app.api.sse import sse_event
 from app.core.config import get_settings
 from app.db import get_db
-from app.models import Project
+from app.models import Project, Repository
 from app.schemas import (
     BootstrapOut,
+    DomModuleCompileRequest,
     ProjectCreate,
     ProjectFromDirectoryRequest,
     ProjectOut,
     ProjectUpdate,
+)
+from app.services.ai_settings import AI_USAGE_DOM_COMPILATION, settings_for_ai_usage
+from app.services.dom_preview_compiler import (
+    DomPreviewCompilationError,
+    compile_dom_module_preview,
+    module_compile_source,
+    static_compile_dom_module_preview,
 )
 from app.services.project_analyzer import ProjectAnalyzer
 from app.services.repo_reader import RepoReader
@@ -201,6 +209,158 @@ def analyze_project_stream(project_id: str, db: Session = Depends(get_db)) -> St
     )
 
 
+@router.post("/projects/{project_id}/dom-modules/compile/stream")
+def compile_dom_module_stream(
+    project_id: str,
+    payload: DomModuleCompileRequest,
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """在 DOM 图谱内手动触发单个页面/组件模块预览编译。"""
+
+    def events() -> Iterator[str]:
+        try:
+            yield sse_event(
+                "start",
+                {
+                    "message": "收到 DOM 模块编译请求。",
+                    "stage": "start",
+                    "percent": 5,
+                    "mode": payload.mode,
+                },
+            )
+            project = require_project(project_id, db)
+            repository = db.scalar(
+                select(Repository).where(
+                    Repository.id == payload.repository_id,
+                    Repository.project_id == project.id,
+                )
+            )
+            if repository is None:
+                raise HTTPException(status_code=404, detail="DOM 模块所在仓库不存在")
+
+            summary = dict(repository.index_summary or {})
+            modules = [
+                dict(module)
+                for module in summary.get("dom_modules", [])
+                if isinstance(module, dict)
+            ]
+            module_index, module = _dom_module_by_id(modules, payload.module_id)
+            yield sse_event(
+                "progress",
+                {
+                    "message": "正在解析页面源码。",
+                    "stage": "source",
+                    "percent": 20,
+                    "mode": payload.mode,
+                },
+            )
+            compile_source = module_compile_source(Path(repository.path), module)
+            compile_module = {
+                **module,
+                "compile_source_file": compile_source.source_file,
+                "compile_source_files": compile_source.source_files,
+            }
+
+            if payload.mode == "ai":
+                yield sse_event(
+                    "progress",
+                    {
+                        "message": "正在调用 DOM 页面编译/修复 AI。",
+                        "stage": "ai_compile",
+                        "percent": 45,
+                        "mode": payload.mode,
+                    },
+                )
+                app_settings = settings_for_ai_usage(
+                    get_settings(),
+                    db,
+                    AI_USAGE_DOM_COMPILATION,
+                )
+                preview = compile_dom_module_preview(
+                    compile_module,
+                    source_text=compile_source.source_text,
+                    settings=app_settings,
+                )
+            else:
+                yield sse_event(
+                    "progress",
+                    {
+                        "message": "正在执行系统内静态编译。",
+                        "stage": "static_compile",
+                        "percent": 45,
+                        "mode": payload.mode,
+                    },
+                )
+                preview = static_compile_dom_module_preview(
+                    compile_module,
+                    source_text=compile_source.source_text,
+                )
+            preview = {
+                **preview,
+                "source_file": compile_source.source_file,
+                "source_files": compile_source.source_files,
+            }
+
+            yield sse_event(
+                "progress",
+                {
+                    "message": "正在写回 DOM 图谱索引。",
+                    "stage": "persist",
+                    "percent": 80,
+                    "mode": payload.mode,
+                },
+            )
+            modules[module_index] = {**module, "preview": preview}
+            repository.index_summary = {**summary, "dom_modules": modules}
+            db.add(repository)
+            db.commit()
+            db.refresh(project)
+            compiled = project_out(project, db)
+            yield sse_event(
+                "project",
+                {
+                    "message": "DOM 模块编译已完成。",
+                    "stage": "project",
+                    "percent": 100,
+                    "mode": payload.mode,
+                    "project": compiled.model_dump(mode="json"),
+                },
+            )
+            yield sse_event(
+                "done",
+                {
+                    "message": "DOM 模块编译流式更新完成。",
+                    "stage": "done",
+                    "percent": 100,
+                    "mode": payload.mode,
+                },
+            )
+        except HTTPException as exc:
+            db.rollback()
+            yield sse_event(
+                "error",
+                {"message": str(exc.detail), "stage": "request", "status_code": exc.status_code},
+            )
+        except DomPreviewCompilationError as exc:
+            db.rollback()
+            yield sse_event(
+                "error",
+                {"message": str(exc), "stage": "compile", "status_code": 502},
+            )
+        except Exception as exc:
+            db.rollback()
+            yield sse_event(
+                "error",
+                {"message": str(exc), "stage": "unknown", "status_code": 500},
+            )
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.put("/projects/{project_id}", response_model=ProjectOut)
 def update_project(
     project_id: str,
@@ -271,3 +431,13 @@ def _analyze_project(project_id: str, settings: dict[str, Any], db: Session) -> 
 
 def _public_analysis_event(event: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in event.items() if not key.startswith("_")}
+
+
+def _dom_module_by_id(
+    modules: list[dict[str, Any]],
+    module_id: str,
+) -> tuple[int, dict[str, Any]]:
+    for index, module in enumerate(modules):
+        if str(module.get("id") or "") == module_id:
+            return index, module
+    raise HTTPException(status_code=404, detail="DOM 模块不存在，请重新分析项目后再试")

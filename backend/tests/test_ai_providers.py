@@ -30,6 +30,7 @@ from app.services.ai.payload_compaction import compact_codex_exec_payload, compa
 from app.services.ai.registry import available_provider_names, build_case_generation_provider
 from app.services.ai_settings import (
     AI_USAGE_API_RUNTIME,
+    AI_USAGE_DOM_COMPILATION,
     AI_USAGE_DSL_GENERATION,
     AI_USAGE_PROJECT_ANALYSIS,
     settings_for_ai_usage,
@@ -536,6 +537,7 @@ def test_ai_provider_update_persists_usage_plan(mysql_engine, monkeypatch) -> No
         AI_USAGE_DSL_GENERATION: "codex_exec",
         AI_USAGE_API_RUNTIME: "openai_compatible",
     }
+    expected_usage_plan = {**usage_plan, AI_USAGE_DOM_COMPILATION: "codex_exec"}
     with Session(mysql_engine) as db:
         status = update_ai_provider(
             AiProviderUpdate(
@@ -551,18 +553,21 @@ def test_ai_provider_update_persists_usage_plan(mysql_engine, monkeypatch) -> No
             for row in db.scalars(select(AiProviderConfig)).all()
         }
         assert status["active_provider"] == "codex_exec"
-        assert status["usage_plan"] == usage_plan
+        assert status["usage_plan"] == expected_usage_plan
         assert rows["codex_exec"].is_active is True
         assert rows["codex_exec"].config == {"executable": "codex"}
         assert set(rows["codex_exec"].usage_keys) == {
             AI_USAGE_PROJECT_ANALYSIS,
             AI_USAGE_DSL_GENERATION,
+            AI_USAGE_DOM_COMPILATION,
         }
 
         runtime_settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_API_RUNTIME)
         dsl_settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_DSL_GENERATION)
+        dom_settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_DOM_COMPILATION)
         assert runtime_settings.ai_provider == "openai_compatible"
         assert dsl_settings.ai_provider == "codex_exec"
+        assert dom_settings.ai_provider == "codex_exec"
 
     get_settings.cache_clear()
 
@@ -598,6 +603,7 @@ def test_ai_provider_switch_rebinds_stale_usage_plan(mysql_engine, monkeypatch) 
             AI_USAGE_PROJECT_ANALYSIS: "codex_exec",
             AI_USAGE_DSL_GENERATION: "codex_exec",
             AI_USAGE_API_RUNTIME: "codex_exec",
+            AI_USAGE_DOM_COMPILATION: "codex_exec",
         }
         dsl_settings = settings_for_ai_usage(get_settings(), db, AI_USAGE_DSL_GENERATION)
         assert dsl_settings.ai_provider == "codex_exec"

@@ -19,6 +19,12 @@ class ProjectFromDirectoryRequest(BaseModel):
     analyze_on_create: bool = False
 
 
+class DomModuleCompileRequest(BaseModel):
+    repository_id: str = Field(min_length=1)
+    module_id: str = Field(min_length=1)
+    mode: str = Field(default="static", pattern="^(static|ai)$")
+
+
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     description: str | None = None

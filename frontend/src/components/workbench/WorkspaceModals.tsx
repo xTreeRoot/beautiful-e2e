@@ -88,6 +88,7 @@ type WorkspaceModalsProps = {
   onSelectProject: (projectId: string) => void;
   onCloseProjectAnalysis: () => void;
   onRunProjectAnalysis: () => void;
+  onProjectUpdated: (project: Project) => void;
   onCloseProjectManager: () => void;
   onOpenProjectCreate: () => void;
   onRefreshProjects: () => void;
@@ -170,6 +171,7 @@ export function WorkspaceModals(props: WorkspaceModalsProps) {
         loading={props.isAnalyzingProject}
         onClose={props.onCloseProjectAnalysis}
         onRunAnalysis={props.onRunProjectAnalysis}
+        onProjectUpdated={props.onProjectUpdated}
         showToast={props.showToast}
       />
       <ProjectManagerModal

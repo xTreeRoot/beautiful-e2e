@@ -11,7 +11,8 @@ const DEFAULT_FORM: AiProviderFormState = {
   usagePlan: {
     project_analysis: 'codex_exec',
     dsl_generation: 'codex_exec',
-    api_runtime: 'codex_exec'
+    api_runtime: 'codex_exec',
+    dom_compilation: 'codex_exec'
   },
   apiKey: '',
   baseUrl: '',

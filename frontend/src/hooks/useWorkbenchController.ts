@@ -6,6 +6,7 @@ import {
   demoBootstrap,
   demoCases,
   type Bootstrap,
+  type Project,
   type TestCase
 } from '../api';
 import { buildDsl } from '../lib/canvas';
@@ -285,6 +286,19 @@ export function useWorkbenchController() {
     setBootstrap(data);
     setActiveGroupId(data.groups[0]?.id ?? 'all');
     applyProjectSettings(data.project);
+  }
+
+  function applyUpdatedProject(nextProject: Project) {
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            project: current.project.id === nextProject.id ? nextProject : current.project,
+            projects: current.projects.map((item) => (item.id === nextProject.id ? nextProject : item))
+          }
+        : current
+    );
+    if (project?.id === nextProject.id) applyProjectSettings(nextProject);
   }
 
   function updatePrompt(value: string) {
@@ -589,6 +603,7 @@ export function useWorkbenchController() {
     rerunCaseFromProgress,
     loadProjectWorkspace,
     analyzeCurrentProject,
+    applyUpdatedProject,
     addNodeFromTemplate,
     updateSelectedNode,
     deleteSelectedNode,
