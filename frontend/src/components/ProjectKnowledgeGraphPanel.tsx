@@ -1,6 +1,6 @@
 import { Alert, Button, Empty, Flex, List, Segmented, Space, Spin, Tag, Tooltip, Typography } from 'antd';
 import { GitBranch, RefreshCw } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type {
   KnowledgeGraphModule,
@@ -54,6 +54,7 @@ export function ProjectKnowledgeGraphPanel({
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
   const [relationshipScope, setRelationshipScope] = useState<RelationshipScope>('module');
   const [evidenceDetail, setEvidenceDetail] = useState<KnowledgeEvidenceDetail | null>(null);
+  const moduleRowRefs = useRef(new Map<string, HTMLDivElement>());
   const selectedModule = useMemo(
     () => modules.find((module) => module.id === selectedModuleId) ?? modules[0] ?? null,
     [modules, selectedModuleId]
@@ -67,6 +68,11 @@ export function ProjectKnowledgeGraphPanel({
     [relationshipScope, relationships, selectedModule]
   );
   const isReviewed = graph?.review_status === 'reviewed';
+  useEffect(() => {
+    if (!selectedModule?.id) return;
+    // 搜索定位后需要同步模块树滚动，否则选中状态可能留在不可见区域。
+    moduleRowRefs.current.get(selectedModule.id)?.scrollIntoView({ block: 'nearest' });
+  }, [selectedModule?.id]);
   const handleSelectModule = (moduleId: string) => {
     setSelectedModuleId(moduleId);
     setRelationshipScope('module');
@@ -147,6 +153,13 @@ export function ProjectKnowledgeGraphPanel({
               dataSource={modules}
               renderItem={(module) => (
                 <List.Item
+                  ref={(element) => {
+                    if (element) {
+                      moduleRowRefs.current.set(module.id, element);
+                    } else {
+                      moduleRowRefs.current.delete(module.id);
+                    }
+                  }}
                   className={module.id === selectedModule?.id ? 'knowledge-module-row active' : 'knowledge-module-row'}
                   role="button"
                   tabIndex={0}

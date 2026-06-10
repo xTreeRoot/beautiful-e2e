@@ -3,6 +3,7 @@ import { BarChart3, Braces, FileCode2, GitBranch, Network, RefreshCw, Route, Sea
 import { useMemo, useState, type ReactNode } from 'react';
 import type { Project, Repository } from '../api';
 import { useProjectKnowledgeGraph } from '../hooks/useProjectKnowledgeGraph';
+import { ProjectDomGraphPanel } from './ProjectDomGraphPanel';
 import { ProjectKnowledgeGraphPanel } from './ProjectKnowledgeGraphPanel';
 
 const { Text, Title } = Typography;
@@ -298,19 +299,7 @@ function AnalysisDetailContent({
   }
 
   if (view === 'dom') {
-    return (
-      <div className="analysis-detail-list">
-        {domTargets.length ? domTargets.slice(0, 80).map((target, index) => (
-          <DetailRow
-            key={`${String(target.value)}-${index}`}
-            icon={<FileCode2 size={15} />}
-            title={`${String(target.kind ?? 'target')}: ${String(target.value ?? '')}`}
-            meta={String(target.hint ?? '')}
-            source={String(target.source ?? '')}
-          />
-        )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无 DOM 目标" />}
-      </div>
-    );
+    return <ProjectDomGraphPanel repositories={repositories} />;
   }
 
   if (view === 'raw') {

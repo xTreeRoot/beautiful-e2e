@@ -99,12 +99,18 @@
   border: 1px solid #eee8dc;
   border-radius: 8px;
   background: #fbfaf7;
+  cursor: pointer;
   padding: 10px;
 }
 
 .knowledge-route-search-row.active {
   border-color: #8ac5b7;
   background: #eef8f5;
+}
+
+.knowledge-route-search-row:focus-visible {
+  outline: 2px solid #20856f;
+  outline-offset: 2px;
 }
 
 .knowledge-route-search-copy {

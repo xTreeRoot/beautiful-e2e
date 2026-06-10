@@ -1,6 +1,6 @@
 import { Button, Empty, Flex, Input, Space, Tag, Tooltip, Typography } from 'antd';
 import { LocateFixed, Route, Search } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { type KeyboardEvent, useMemo, useState } from 'react';
 
 import {
   type KnowledgeGraphRouteSearchResult,
@@ -35,6 +35,12 @@ export function KnowledgeGraphRouteSearch({
   );
   const hasQuery = query.trim().length > 0;
   const isToolbar = variant === 'toolbar';
+  const handleSelectResult = (moduleId: string) => {
+    onSelectModule(moduleId);
+    if (isToolbar) {
+      setQuery('');
+    }
+  };
 
   return (
     <section
@@ -69,7 +75,7 @@ export function KnowledgeGraphRouteSearch({
                 key={`${result.module.id}-${result.route.id}`}
                 result={result}
                 active={result.module.id === selectedModuleId}
-                onSelectModule={onSelectModule}
+                onSelect={() => handleSelectResult(result.module.id)}
               />
             ))}
           </div>
@@ -84,14 +90,28 @@ export function KnowledgeGraphRouteSearch({
 function SearchResultRow({
   result,
   active,
-  onSelectModule
+  onSelect
 }: {
   result: KnowledgeGraphRouteSearchResult;
   active: boolean;
-  onSelectModule: (moduleId: string) => void;
+  onSelect: () => void;
 }) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onSelect();
+  };
+
   return (
-    <div className={active ? 'knowledge-route-search-row active' : 'knowledge-route-search-row'}>
+    <div
+      className={active ? 'knowledge-route-search-row active' : 'knowledge-route-search-row'}
+      role="button"
+      tabIndex={0}
+      aria-label={`定位到 ${result.module.name} 模块`}
+      aria-current={active ? 'true' : undefined}
+      onClick={onSelect}
+      onKeyDown={handleKeyDown}
+    >
       <Flex align="flex-start" justify="space-between" gap={10}>
         <div className="knowledge-route-search-copy">
           <Flex align="center" gap={8} wrap>
@@ -109,7 +129,10 @@ function SearchResultRow({
             className="icon-button"
             aria-label="定位到模块"
             icon={<LocateFixed size={15} />}
-            onClick={() => onSelectModule(result.module.id)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
           />
         </Tooltip>
       </Flex>
