@@ -253,24 +253,26 @@ function AnalysisDetailContent({
           value={routeSearch}
           onChange={(event) => onRouteSearchChange(event.target.value)}
         />
-        {routes.length ? (
-          <>
-            <Flex align="center" justify="space-between" className="analysis-list-toolbar">
-              <Text className="field-label">接口结果</Text>
-              <Tag>{filteredRoutes.length} / {routes.length}</Tag>
-            </Flex>
-            {filteredRoutes.length ? filteredRoutes.slice(0, 120).map((route, index) => (
-              <DetailRow
-                key={`${String(route.path)}-${index}`}
-                icon={<Network size={15} />}
-                title={`${String(route.method ?? 'GET')} ${String(route.path ?? '/')}`}
-                meta={String(route.summary ?? route.handler ?? '')}
-                source={String(route.source ?? '')}
-                details={<RouteContractSummary route={route} />}
-              />
-            )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的接口" />}
-          </>
-        ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无接口路由" />}
+        <div className="analysis-route-results">
+          {routes.length ? (
+            <>
+              <Flex align="center" justify="space-between" className="analysis-list-toolbar">
+                <Text className="field-label">接口结果</Text>
+                <Tag>{filteredRoutes.length} / {routes.length}</Tag>
+              </Flex>
+              {filteredRoutes.length ? filteredRoutes.slice(0, 120).map((route, index) => (
+                <DetailRow
+                  key={`${String(route.path)}-${index}`}
+                  icon={<Network size={15} />}
+                  title={`${String(route.method ?? 'GET')} ${String(route.path ?? '/')}`}
+                  meta={String(route.summary ?? route.handler ?? '')}
+                  source={String(route.source ?? '')}
+                  details={<RouteContractSummary route={route} />}
+                />
+              )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有匹配的接口" />}
+            </>
+          ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无接口路由" />}
+        </div>
       </div>
     );
   }

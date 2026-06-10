@@ -332,7 +332,6 @@ select {
 }
 
 .analysis-route-search.ant-input-affix-wrapper {
-  margin-bottom: 10px;
   border-color: #d4cbbd;
   border-radius: 8px;
   background: #ffffff;
@@ -342,6 +341,18 @@ select {
   min-height: 0;
   overflow: auto;
   padding-top: 12px;
+}
+
+.analysis-routes-list {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  overflow: hidden;
+}
+
+.analysis-route-results {
+  min-height: 0;
+  overflow: auto;
 }
 
 .analysis-list-toolbar {
