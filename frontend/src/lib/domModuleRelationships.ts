@@ -1,9 +1,25 @@
+import { apiRouteLabel, type DomApiRouteRef } from './domApiRelations';
 import type { DomFileGroup, DomRelatedComponent, DomTargetNode } from './domTargetGraph';
+
+export type DomApiRelationshipTarget = {
+  targetType: 'api';
+  id: string;
+  kind: 'api-route';
+  kindLabel: string;
+  value: string;
+  hint: string;
+  source: string;
+  locator: null;
+  stability: 'high';
+  apiRoute: DomApiRouteRef;
+};
+
+export type DomRelationshipTarget = DomTargetNode | DomApiRelationshipTarget;
 
 export type DomRelationship = {
   id: string;
   from: DomTargetNode;
-  to: DomTargetNode;
+  to: DomRelationshipTarget;
   reason: string;
   scopeLabel: string | null;
 };
@@ -23,7 +39,7 @@ export function relationshipsForModule(module: DomFileGroup | null): DomRelation
   const entrypoints = entrypointTargetsForModule(module);
   if (!entrypoints.length) return [];
   const pageEntry = entrypoints.find((entry) => entry.kind === 'route') ?? entrypoints[0];
-  const ownRelationships = module.targets
+  const ownRelationships: DomRelationship[] = module.targets
     .filter((target) => target.id !== pageEntry.id)
     .slice(0, 24)
     .map((target) => ({
@@ -33,7 +49,15 @@ export function relationshipsForModule(module: DomFileGroup | null): DomRelation
       reason: relationshipReason(target),
       scopeLabel: null
     }));
-  if (module.moduleType !== 'page' || !module.relatedComponents.length) return ownRelationships;
+  const ownApiRelationships = apiRelationshipsForRoutes(
+    pageEntry,
+    module.relatedApiRoutes,
+    `当前${module.moduleType === 'page' ? '页面' : '组件'}源码明确引用该接口路径，且后端仓库扫描到同路径路由。`,
+    null
+  );
+  if (module.moduleType !== 'page' || !module.relatedComponents.length) {
+    return uniqueRelationships([...ownRelationships, ...ownApiRelationships]).slice(0, 64);
+  }
 
   const componentRelationships = module.relatedComponents.flatMap((component) => {
     const componentEntry = entrypointTargetsForModule(component)[0] ?? component.targets[0];
@@ -55,10 +79,20 @@ export function relationshipsForModule(module: DomFileGroup | null): DomRelation
         reason: componentRelationshipReason(target, component),
         scopeLabel: component.moduleName
       }));
-    return [entryRelationship, ...childRelationships];
+    const childApiRelationships = apiRelationshipsForRoutes(
+      componentEntry,
+      component.relatedApiRoutes,
+      `页面源码引用组件 ${component.moduleName}，该组件源码明确引用该接口路径，且后端仓库扫描到同路径路由。`,
+      component.moduleName
+    );
+    return [entryRelationship, ...childRelationships, ...childApiRelationships];
   });
 
-  return uniqueRelationships([...ownRelationships, ...componentRelationships]).slice(0, 48);
+  return uniqueRelationships([...ownRelationships, ...ownApiRelationships, ...componentRelationships]).slice(0, 64);
+}
+
+export function isApiRelationshipTarget(target: DomRelationshipTarget): target is DomApiRelationshipTarget {
+  return 'targetType' in target && target.targetType === 'api';
 }
 
 export function targetsForModuleScope(module: DomFileGroup | null): DomTargetNode[] {
@@ -93,6 +127,39 @@ function relationshipReason(target: DomTargetNode): string {
 
 function componentRelationshipReason(target: DomTargetNode, component: DomRelatedComponent): string {
   return `该目标来自页面关联组件 ${component.moduleName}，应作为页面流程中的组件内操作或断言候选。${relationshipReason(target)}`;
+}
+
+function apiRelationshipsForRoutes(
+  from: DomTargetNode,
+  routes: DomApiRouteRef[],
+  reason: string,
+  scopeLabel: string | null
+): DomRelationship[] {
+  return routes.slice(0, 12).map((route) => {
+    const target = apiTargetFromRoute(route);
+    return {
+      id: `${from.id}->${target.id}`,
+      from,
+      to: target,
+      reason,
+      scopeLabel
+    };
+  });
+}
+
+function apiTargetFromRoute(route: DomApiRouteRef): DomApiRelationshipTarget {
+  return {
+    targetType: 'api',
+    id: route.id,
+    kind: 'api-route',
+    kindLabel: '接口',
+    value: apiRouteLabel(route),
+    hint: route.summary || route.handler || route.source || route.repositoryName,
+    source: route.source || route.repositoryName,
+    locator: null,
+    stability: 'high',
+    apiRoute: route
+  };
 }
 
 function uniqueTargets(targets: DomTargetNode[]): DomTargetNode[] {

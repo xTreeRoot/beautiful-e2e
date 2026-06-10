@@ -141,6 +141,7 @@ export function useWorkbenchController() {
     setIsRunningCase,
     caseRunProgress,
     startCaseRunProgress,
+    openCaseRunProgress,
     closeCaseRunProgress,
     applyCaseRunEvent,
     finishCaseRunWithError
@@ -463,6 +464,7 @@ export function useWorkbenchController() {
     isSavingProjectHeaders,
     isRunningCase,
     caseRunProgress,
+    openCaseRunProgress,
     closeCaseRunProgress,
     isCreatingProject,
     isAnalyzingProject,

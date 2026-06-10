@@ -1,5 +1,5 @@
 import { Button, Flex, Layout, Space, Tooltip, Typography } from 'antd';
-import { Bot, Braces, CirclePlay, RefreshCw, Save, Sparkles } from 'lucide-react';
+import { Bot, Braces, CirclePlay, History, RefreshCw, Save, Sparkles } from 'lucide-react';
 
 import type { Group, TestCase } from '../../api';
 import type { ExecutionMode } from '../../types/workbench';
@@ -16,10 +16,12 @@ type WorkspaceTopbarProps = {
   isGenerating: boolean;
   isSaving: boolean;
   isRunningCase: boolean;
+  hasCaseRunSnapshot: boolean;
   onGenerate: () => void;
   onOpenAiConfig: () => void;
   onSaveCanvas: () => void;
   onRunCase: () => void;
+  onOpenCaseRunSnapshot: () => void;
   onOpenDsl: () => void;
 };
 
@@ -32,10 +34,12 @@ export function WorkspaceTopbar({
   isGenerating,
   isSaving,
   isRunningCase,
+  hasCaseRunSnapshot,
   onGenerate,
   onOpenAiConfig,
   onSaveCanvas,
   onRunCase,
+  onOpenCaseRunSnapshot,
   onOpenDsl
 }: WorkspaceTopbarProps) {
   const normalizedStatus = status.trim();
@@ -85,6 +89,16 @@ export function WorkspaceTopbar({
           >
             {executionMode === 'backend_api' ? '运行接口' : '运行流程'}
           </Button>
+          <Tooltip title={hasCaseRunSnapshot ? '打开上次运行历史（快照）' : '暂无运行历史'}>
+            <Button
+              className="secondary-button"
+              icon={<History size={18} />}
+              disabled={!hasCaseRunSnapshot}
+              onClick={onOpenCaseRunSnapshot}
+            >
+              上次快照
+            </Button>
+          </Tooltip>
           <Button className="secondary-button" icon={<Braces size={18} />} onClick={onOpenDsl}>
             打开 DSL
           </Button>

@@ -70,6 +70,13 @@ export function useCaseRunProgress() {
     setCaseRunProgress((current) => ({ ...current, open: false }));
   }
 
+  function openCaseRunProgress() {
+    setCaseRunProgress((current) => {
+      if (current.runId === 0 && current.phase === 'idle') return current;
+      return { ...current, open: true };
+    });
+  }
+
   function applyCaseRunEvent(runId: number, event: CaseRunStreamEvent) {
     setCaseRunProgress((current) => {
       if (current.runId !== runId) return current;
@@ -169,6 +176,7 @@ export function useCaseRunProgress() {
     setIsRunningCase,
     caseRunProgress,
     startCaseRunProgress,
+    openCaseRunProgress,
     closeCaseRunProgress,
     applyCaseRunEvent,
     finishCaseRunWithError

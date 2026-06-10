@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.services.dom_api_refs import api_references
 from app.services.dom_component_refs import component_references
 
 
@@ -173,6 +174,7 @@ class DomProjectAnalyzer:
         name = title or _route_name(route) or _file_name(source_file)
         hints = _ui_hints(content)
         component_refs = component_references(content)
+        api_refs = api_references(content)
         evidence = [f"页面入口：{route}", f"来源：{source_file}:{source_line}"]
         if hints:
             evidence.extend(hints[:4])
@@ -189,13 +191,16 @@ class DomProjectAnalyzer:
         }
         if component_refs:
             module["component_refs"] = component_refs
+        if api_refs:
+            module["api_refs"] = api_refs
         return module
 
     def _component_module(self, source_file: str, content: str) -> dict[str, Any]:
         name = _file_name(source_file)
         hints = _ui_hints(content)
         component_refs = component_references(content)
-        return {
+        api_refs = api_references(content)
+        module = {
             "id": _stable_id("component", source_file, name),
             "kind": "component",
             "name": name,
@@ -207,6 +212,9 @@ class DomProjectAnalyzer:
             "component_refs": component_refs,
             "preview": self._preview_payload(name=name, module_kind="component", route=None, hints=hints),
         }
+        if api_refs:
+            module["api_refs"] = api_refs
+        return module
 
     def _preview_payload(
         self,
@@ -552,6 +560,9 @@ def _merge_module_bucket(bucket: list[dict[str, Any]]) -> dict[str, Any]:
     component_refs = _merged_text_list(bucket, "component_refs")
     if component_refs:
         base["component_refs"] = component_refs
+    api_refs = _merged_text_list(bucket, "api_refs")
+    if api_refs:
+        base["api_refs"] = api_refs
     config_source_file = _first_text_value(bucket, "config_source_file")
     config_source = _first_text_value(bucket, "config_source")
     if config_source_file:

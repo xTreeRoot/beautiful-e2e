@@ -27,6 +27,7 @@ type WorkspaceMainProps = {
   isGenerating: boolean;
   isSaving: boolean;
   isRunningCase: boolean;
+  hasCaseRunSnapshot: boolean;
   prompt: string;
   templates: NodeTemplate[];
   nodes: CanvasNode[];
@@ -37,6 +38,7 @@ type WorkspaceMainProps = {
   onOpenAiConfig: () => void;
   onSaveCanvas: () => void;
   onRunCase: () => void;
+  onOpenCaseRunSnapshot: () => void;
   onOpenDsl: () => void;
   onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<CanvasEdge>[]) => void;
@@ -60,6 +62,7 @@ export function WorkspaceMain({
   isGenerating,
   isSaving,
   isRunningCase,
+  hasCaseRunSnapshot,
   prompt,
   templates,
   nodes,
@@ -70,6 +73,7 @@ export function WorkspaceMain({
   onOpenAiConfig,
   onSaveCanvas,
   onRunCase,
+  onOpenCaseRunSnapshot,
   onOpenDsl,
   onNodesChange,
   onEdgesChange,
@@ -93,10 +97,12 @@ export function WorkspaceMain({
         isGenerating={isGenerating}
         isSaving={isSaving}
         isRunningCase={isRunningCase}
+        hasCaseRunSnapshot={hasCaseRunSnapshot}
         onGenerate={onGenerate}
         onOpenAiConfig={onOpenAiConfig}
         onSaveCanvas={onSaveCanvas}
         onRunCase={onRunCase}
+        onOpenCaseRunSnapshot={onOpenCaseRunSnapshot}
         onOpenDsl={onOpenDsl}
       />
 

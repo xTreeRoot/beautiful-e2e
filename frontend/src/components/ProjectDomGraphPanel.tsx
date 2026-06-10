@@ -25,10 +25,12 @@ import {
 } from '../lib/domTargetGraph';
 import {
   entrypointTargetsForModule,
+  isApiRelationshipTarget,
   kindCountsForTargets,
   relationshipsForModule,
   targetsForModuleScope,
-  type DomRelationship
+  type DomRelationship,
+  type DomRelationshipTarget
 } from '../lib/domModuleRelationships';
 import { DomPagePreviewCard } from './DomPagePreviewCard';
 import './projectDomGraph.css';
@@ -227,6 +229,7 @@ function DomModuleList({
                     <Tag>{entrypointTargetsForModule(module).length} 入口</Tag>
                     <Tag>{module.targetCount} 目标</Tag>
                     {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 组件</Tag> : null}
+                    {module.relatedApiRoutes.length ? <Tag color="purple">{module.relatedApiRoutes.length} 接口</Tag> : null}
                     {domKindEntries(module.kindCounts).slice(0, 2).map(([kind, count]) => (
                       <Tag key={kind}>{domKindLabel(kind)} {count}</Tag>
                     ))}
@@ -351,29 +354,39 @@ function DomRelationshipCard({
   active: boolean;
   onOpenTarget: (targetId: string) => void;
 }) {
+  const target = relationship.to;
+  const isApiTarget = isApiRelationshipTarget(target);
   return (
     <div className={active ? 'dom-relationship-card active' : 'dom-relationship-card'}>
       <button
         type="button"
         className="dom-card-open"
-        onClick={() => onOpenTarget(relationship.to.id)}
+        onClick={() => onOpenTarget(target.id)}
       >
         <Flex align="center" gap={8} className="dom-route-flow">
           <GitBranch size={15} aria-hidden="true" />
-          <Text strong>{relationship.to.kindLabel}</Text>
-          <Tag>{stabilityLabel(relationship.to.stability)}</Tag>
+          <Text strong>{target.kindLabel}</Text>
+          {isApiTarget ? (
+            <>
+              <Tag color="purple">{target.apiRoute.method}</Tag>
+              <Tag>真实路由</Tag>
+            </>
+          ) : (
+            <Tag>{stabilityLabel(target.stability)}</Tag>
+          )}
         </Flex>
         <div className="dom-flow-line">
           <DomTargetRef target={relationship.from} />
           <span className="dom-flow-arrow">-&gt;</span>
-          <DomTargetRef target={relationship.to} />
+          <DomTargetRef target={target} />
         </div>
         <Paragraph className="dom-card-note">{relationship.reason}</Paragraph>
       </button>
       <Space size={6} wrap className="dom-evidence-tags">
         {relationship.scopeLabel ? <Tag color="geekblue">{relationship.scopeLabel}</Tag> : null}
-        <Tag>{relationship.to.source || relationship.to.filePath}</Tag>
-        {relationship.to.locator ? <Tag>{relationship.to.locator}</Tag> : null}
+        <Tag>{targetSourceLabel(target)}</Tag>
+        {isApiTarget ? <Tag>{target.apiRoute.repositoryName}</Tag> : null}
+        {target.locator ? <Tag>{target.locator}</Tag> : null}
       </Space>
     </div>
   );
@@ -420,6 +433,7 @@ function DomEvidencePanel({
           <Tag>{scopeTargets.length} DOM 目标</Tag>
           <Tag>{entrypointTargetsForModule(module).length} 入口候选</Tag>
           {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 联动组件</Tag> : null}
+          {module.relatedApiRoutes.length ? <Tag color="purple">{module.relatedApiRoutes.length} 关联接口</Tag> : null}
         </Space>
       </div>
 
@@ -506,13 +520,20 @@ function DomTargetCardList({
   );
 }
 
-function DomTargetRef({ target }: { target: DomTargetNode }) {
+function DomTargetRef({ target }: { target: DomRelationshipTarget }) {
   return (
     <span className="dom-target-ref">
       <Text strong>{target.kindLabel}</Text>
       <Text>{target.value}</Text>
     </span>
   );
+}
+
+function targetSourceLabel(target: DomRelationshipTarget): string {
+  if (isApiRelationshipTarget(target)) {
+    return target.apiRoute.source || target.apiRoute.repositoryPath || target.apiRoute.repositoryName;
+  }
+  return target.source || target.filePath;
 }
 
 function Fact({

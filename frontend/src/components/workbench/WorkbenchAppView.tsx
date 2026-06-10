@@ -64,6 +64,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
     isSavingProjectHeaders,
     isRunningCase,
     caseRunProgress,
+    openCaseRunProgress,
     closeCaseRunProgress,
     isCreatingProject,
     isAnalyzingProject,
@@ -215,6 +216,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
     deleteSelectedNode,
     showToast
   } = controller;
+  const hasCaseRunSnapshot = caseRunProgress.runId > 0 && caseRunProgress.phase !== 'idle';
 
   return (
     <ConfigProvider
@@ -280,6 +282,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
           isGenerating={isGenerating}
           isSaving={isSaving}
           isRunningCase={isRunningCase}
+          hasCaseRunSnapshot={hasCaseRunSnapshot}
           prompt={prompt}
           templates={availableNodeTemplates}
           nodes={nodes}
@@ -290,6 +293,7 @@ export function WorkbenchAppView({ controller }: WorkbenchAppViewProps) {
           onOpenAiConfig={openAiConfig}
           onSaveCanvas={() => void saveCanvas()}
           onRunCase={() => void runCase()}
+          onOpenCaseRunSnapshot={openCaseRunProgress}
           onOpenDsl={() => setIsDslPreviewOpen(true)}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}

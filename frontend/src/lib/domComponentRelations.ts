@@ -40,7 +40,9 @@ function relatedComponentFromModule(component: DomFileGroup): DomRelatedComponen
     path: component.path,
     targetCount: component.targetCount,
     kindCounts: component.kindCounts,
-    targets: component.targets
+    targets: component.targets,
+    apiRefs: component.apiRefs,
+    relatedApiRoutes: component.relatedApiRoutes
   };
 }
 

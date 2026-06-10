@@ -78,11 +78,63 @@ def test_repo_reader_extracts_only_config_pages_with_page_source(tmp_path) -> No
     assert home_module["source_file"] == "pages/home/index.vue"
     assert home_module["config_source_file"] == "pages.json"
     assert "user-card" in home_module["component_refs"]
+    assert "api_refs" not in home_module
     assert home_module["preview"]["ai_usage_key"] == "dom_compilation"
     assert "首页" in home_module["preview"]["html"]
     assert "primary-action" in home_module["preview"]["html"]
     component_modules = [module for module in summary.dom_modules if module["kind"] == "component"]
     assert [module["source_file"] for module in component_modules] == ["components/user-card.vue"]
+
+
+def test_repo_reader_extracts_api_refs_from_page_and_component_sources(tmp_path) -> None:
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "pages.json").write_text(
+        json.dumps(
+            {
+                "pages": [
+                    {
+                        "path": "pages/entity/index",
+                        "style": {"navigationBarTitleText": "实体页"},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    page_file = frontend / "pages/entity/index.vue"
+    page_file.parent.mkdir(parents=True)
+    page_file.write_text(
+        """
+        <template><view><record-list /></view></template>
+        <script>
+        fetch('/api/entities/list?keyword=x')
+        const imageUrl = '/assets/banner.png'
+        const pageUrl = '/pages/entity/detail'
+        </script>
+        """,
+        encoding="utf-8",
+    )
+    component_file = frontend / "components/record-list.vue"
+    component_file.parent.mkdir(parents=True)
+    component_file.write_text(
+        """
+        <template><view><button data-testid="record-refresh">刷新</button></view></template>
+        <script>
+        axios.get('/api/records/options')
+        export default { props: { url: '/pages/entity/detail' } }
+        </script>
+        """,
+        encoding="utf-8",
+    )
+
+    summary = RepoReader().summarize(str(frontend))
+
+    page_module = next(module for module in summary.dom_modules if module["kind"] == "page")
+    component_module = next(module for module in summary.dom_modules if module["kind"] == "component")
+    assert page_module["api_refs"] == ["/api/entities/list"]
+    assert component_module["api_refs"] == ["/api/records/options"]
 
 
 def test_repo_reader_merges_src_page_config_with_page_body(tmp_path) -> None:

@@ -1,4 +1,9 @@
 import type { DomModuleCompileMode, Repository } from '../api';
+import {
+  apiRoutesFromRepositories,
+  relatedApiRoutesForRefs,
+  type DomApiRouteRef
+} from './domApiRelations';
 import { linkRelatedComponents } from './domComponentRelations';
 
 /**
@@ -41,6 +46,8 @@ export type DomRelatedComponent = {
   targetCount: number;
   kindCounts: Record<string, number>;
   targets: DomTargetNode[];
+  apiRefs: string[];
+  relatedApiRoutes: DomApiRouteRef[];
 };
 
 export type DomFileGroup = {
@@ -62,6 +69,8 @@ export type DomFileGroup = {
   evidence: string[];
   componentRefs: string[];
   relatedComponents: DomRelatedComponent[];
+  apiRefs: string[];
+  relatedApiRoutes: DomApiRouteRef[];
   path: string;
   targetCount: number;
   kindCounts: Record<string, number>;
@@ -108,6 +117,7 @@ export function buildDomTargetGraph(repositories: Repository[]): DomTargetGraph 
   const fileMap = new Map<string, DomFileGroup>();
   const targets: DomTargetNode[] = [];
   const kindCounts: Record<string, number> = {};
+  const apiRoutes = apiRoutesFromRepositories(repositories);
 
   repositories.forEach((repository) => {
     const rawTargets = domTargetsFromRepository(repository);
@@ -154,7 +164,7 @@ export function buildDomTargetGraph(repositories: Repository[]): DomTargetGraph 
     });
   });
 
-  const moduleRepositories = repositoriesWithDomModules(repositories, targets);
+  const moduleRepositories = repositoriesWithDomModules(repositories, targets, apiRoutes);
   if (moduleRepositories.length) {
     const moduleTargets = moduleRepositories.flatMap((repository) =>
       repository.files.flatMap((file) => file.targets)
@@ -203,7 +213,10 @@ export function filterDomTargetGraph(graph: DomTargetGraph, keyword: string): Do
     .map((repository) => {
       const files = repository.files
         .map((file) => {
-          const targets = file.targets.filter((target) => domTargetSearchText(target).includes(normalized));
+          const fileMatched = domFileGroupSearchText(file).includes(normalized);
+          const targets = fileMatched
+            ? file.targets
+            : file.targets.filter((target) => domTargetSearchText(target).includes(normalized));
           return fileFromTargets(file, targets);
         })
         .filter((file): file is DomFileGroup => Boolean(file));
@@ -296,6 +309,8 @@ function ensureFileGroup(
     evidence: [],
     componentRefs: [],
     relatedComponents: [],
+    apiRefs: [],
+    relatedApiRoutes: [],
     path: filePath,
     targetCount: 0,
     kindCounts: {},
@@ -394,7 +409,8 @@ function moduleFromTargets(
 
 function repositoriesWithDomModules(
   repositories: Repository[],
-  extractedTargets: DomTargetNode[]
+  extractedTargets: DomTargetNode[],
+  apiRoutes: DomApiRouteRef[]
 ): DomRepositoryGroup[] {
   const groups = repositories
     .map((repository) => {
@@ -402,7 +418,9 @@ function repositoriesWithDomModules(
       if (!rawModules.length) return null;
       const repositoryGroup = ensureRepositoryGroup(new Map(), repository);
       const files = linkRelatedComponents(rawModules
-        .map((module, index) => domFileGroupFromModule(repositoryGroup, module, extractedTargets, index))
+        .map((module, index) => (
+          domFileGroupFromModule(repositoryGroup, module, extractedTargets, apiRoutes, index)
+        ))
         .filter((module): module is DomFileGroup => Boolean(module)))
         .sort(compareModules);
       const repositoryTargets = files.flatMap((file) => file.targets);
@@ -422,6 +440,7 @@ function domFileGroupFromModule(
   repository: DomRepositoryGroup,
   rawModule: Record<string, unknown>,
   extractedTargets: DomTargetNode[],
+  apiRoutes: DomApiRouteRef[],
   index: number
 ): DomFileGroup | null {
   const moduleType = cleanText(rawModule.kind) === 'page' ? 'page' : 'component';
@@ -462,6 +481,7 @@ function domFileGroupFromModule(
       sourceFile,
       hint: evidenceFromModule(rawModule)[0] ?? ''
     })];
+  const apiRefs = textListFromModule(rawModule, 'api_refs', 'apiRefs');
   return {
     id: cleanText(rawModule.id) || `${repository.id}:dom-module:${index}`,
     repositoryId: repository.id,
@@ -481,6 +501,8 @@ function domFileGroupFromModule(
     evidence: evidenceFromModule(rawModule),
     componentRefs: textListFromModule(rawModule, 'component_refs', 'componentRefs'),
     relatedComponents: [],
+    apiRefs,
+    relatedApiRoutes: relatedApiRoutesForRefs(apiRefs, apiRoutes),
     path: sourceFile || source || name,
     targetCount: finalTargets.length,
     kindCounts: countKinds(finalTargets),
@@ -601,6 +623,31 @@ function domTargetSearchText(target: DomTargetNode): string {
     target.locator,
     target.hint,
     target.source
+  ].map((value) => String(value ?? '').toLowerCase()).join(' ');
+}
+
+function domFileGroupSearchText(file: DomFileGroup): string {
+  return [
+    file.repositoryKind,
+    file.repositoryName,
+    file.repositoryPath,
+    file.moduleName,
+    file.moduleType,
+    file.pagePath,
+    file.source,
+    file.framework,
+    file.path,
+    ...file.evidence,
+    ...file.componentRefs,
+    ...file.apiRefs,
+    ...file.relatedApiRoutes.flatMap((route) => [
+      route.method,
+      route.path,
+      route.summary,
+      route.handler,
+      route.source,
+      route.repositoryName
+    ])
   ].map((value) => String(value ?? '').toLowerCase()).join(' ');
 }
 

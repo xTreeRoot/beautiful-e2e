@@ -14,7 +14,7 @@ Beautiful E2E 是一个面向多人协作的端到端自动化测试平台雏形
 - 路由证据约束：纯后端接口模式会扫描后端控制器 / 路由装饰器 / Swagger / OpenAPI 文档，向生成器提供真实方法、URL、处理函数、来源文件、参数、请求体和响应结构，避免凭某个业务域的惯例编造接口。
 - 接口参数链路：接口步骤支持在 `step.data.extract` 中从响应 JSON 提取业务变量，并在后续 `target_url`、非认证 `data.headers`、`data.body` 中使用 `{{变量}}`；认证、登录态和网关请求头由项目请求头配置注入，不进入 DSL 变量链。生成器会倒推缺失的上游搜索、列表、详情、首页、预检或创建接口，运行器和 Playwright 导出都会真实解析变量。运行期若 JSONPath 或响应字段变动导致变量缺失，会先从前序响应做确定性别名推导，仍无法推导时可调用配置的 AI agent 做受限抽取，避免只在图上连线但 body 参数缺失。
 - 生成反馈闭环：纯后端接口模式保存用例前会按真实路由目录纠正常见的 method/path/query/body 契约偏差，并把 404、未知处理器、硬编码 ID、无生产者变量等问题整理到 `code_context.api_generation_feedback`。后续把运行失败反馈给生成 agent 时，应优先回到项目路径内的路由、Swagger/OpenAPI 和 DTO 契约，而不是继续沿用失败 DSL。
-- 项目分析索引：创建项目可选择立即分析，也可在工作台点击“更新分析”；重新分析会调用 `POST /api/projects/{project_id}/analyze/stream` 并通过 SSE 持续展示扫描进度、扫描覆盖率和耗时。多模块仓库会按构建子模块分组轮询扫描，并优先覆盖 Controller、路由和 OpenAPI 文件；`max_routes` 只限制最终摘要大小，不会让路径靠前的子模块独占接口名额。分析结果会写入 `repositories.index_summary`，后续生成优先复用已沉淀的接口路由和 DOM 目标；DOM 页面模块会保留源码中的组件引用，前端图谱按同仓库组件联动展示入口、目标、链路关系和编译完成状态。
+- 项目分析索引：创建项目可选择立即分析，也可在工作台点击“更新分析”；重新分析会调用 `POST /api/projects/{project_id}/analyze/stream` 并通过 SSE 持续展示扫描进度、扫描覆盖率和耗时。多模块仓库会按构建子模块分组轮询扫描，并优先覆盖 Controller、路由和 OpenAPI 文件；`max_routes` 只限制最终摘要大小，不会让路径靠前的子模块独占接口名额。分析结果会写入 `repositories.index_summary`，后续生成优先复用已沉淀的接口路由和 DOM 目标；DOM 页面模块会保留源码中的组件引用和显式接口引用，前端图谱按同仓库组件、后端真实路由联动展示入口、目标、链路关系和编译完成状态。
 - 项目知识图谱：项目分析会把接口路由进一步归纳为模块、入口候选、适用/排除场景和变量流关系，写入 `project_knowledge_graphs`。模块名只使用主路径段，后续路径段作为子域或跨模块关联线索；工作台“项目分析中心”提供模块树、链路图、证据卡片和相似接口搜索。候选图谱是带截断提示的轻量摘要，会合并工作区与子仓库重复扫描出的同一路由模块，人工批准为 `reviewed` 后才会进入 `project_context.knowledge_graph`，作为 DSL 生成的强事实。
 - MySQL 持久化：SQLAlchemy 模型覆盖项目、仓库、用户、用例组、用例、步骤、执行记录、评论和审计事件。
 - Playwright 落地：可把平台用例导出为 `runner/tests/generated/*.spec.ts`，接入 CI 回归。
