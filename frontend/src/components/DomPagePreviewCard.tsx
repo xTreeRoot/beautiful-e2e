@@ -20,7 +20,7 @@ export function DomPagePreviewCard({
 }: DomPagePreviewCardProps) {
   const previewHtml = module.previewHtml?.trim() ?? '';
   const previewSource = module.previewSource ?? module.source;
-  const previewLabel = previewLabelForStrategy(module.previewStrategy);
+  const previewLabel = previewLabelForStrategy(module.previewStrategy, module.isCompiled);
   const activeProgress = compileProgress?.moduleId === module.id ? compileProgress : null;
   const isCompiling = activeProgress?.phase === 'running';
   const [frameHeight, setFrameHeight] = useState(320);
@@ -51,7 +51,10 @@ export function DomPagePreviewCard({
           <FileText size={15} aria-hidden="true" />
           <Text strong>系统内渲染预览</Text>
         </Space>
-        {previewHtml ? <Tag>{previewLabel}</Tag> : <Tag>等待编译</Tag>}
+        <Space size={6}>
+          {previewHtml ? <Tag>{previewLabel}</Tag> : <Tag>等待预览</Tag>}
+          {module.isCompiled ? <Tag color="success">已完成编译</Tag> : <Tag>未编译</Tag>}
+        </Space>
       </Flex>
       {onCompile ? (
         <Flex align="center" justify="space-between" gap={8} className="dom-page-preview-actions">
@@ -113,8 +116,8 @@ export function DomPagePreviewCard({
   );
 }
 
-function previewLabelForStrategy(strategy: string | null): string {
+function previewLabelForStrategy(strategy: string | null, isCompiled: boolean): string {
   if (strategy === 'ai_dom_compilation') return 'AI 修复编译';
-  if (strategy === 'static_dom_sketch') return '静态编译';
+  if (strategy === 'static_dom_sketch') return isCompiled ? '静态编译' : '静态草图';
   return '已编译';
 }

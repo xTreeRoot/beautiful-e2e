@@ -57,6 +57,8 @@ export type DomFileGroup = {
   previewHtml: string | null;
   previewSource: string | null;
   previewStrategy: string | null;
+  previewCompiledAt: string | null;
+  isCompiled: boolean;
   evidence: string[];
   componentRefs: string[];
   relatedComponents: DomRelatedComponent[];
@@ -289,6 +291,8 @@ function ensureFileGroup(
     previewHtml: null,
     previewSource: null,
     previewStrategy: null,
+    previewCompiledAt: null,
+    isCompiled: false,
     evidence: [],
     componentRefs: [],
     relatedComponents: [],
@@ -428,6 +432,7 @@ function domFileGroupFromModule(
   const rawPreview = rawModule.preview && typeof rawModule.preview === 'object'
     ? rawModule.preview as Record<string, unknown>
     : {};
+  const previewCompiledAt = cleanText(rawPreview.compiled_at) || cleanText(rawPreview.compiledAt) || null;
   const matchedTargets = extractedTargets.filter((target) => {
     if (target.repositoryId !== repository.id || !sourceFile || target.filePath !== sourceFile) return false;
     if (moduleType === 'component') return true;
@@ -471,6 +476,8 @@ function domFileGroupFromModule(
     previewHtml: cleanText(rawPreview.html) || null,
     previewSource: cleanText(rawPreview.source_file) || null,
     previewStrategy: cleanText(rawPreview.strategy) || null,
+    previewCompiledAt,
+    isCompiled: Boolean(previewCompiledAt),
     evidence: evidenceFromModule(rawModule),
     componentRefs: textListFromModule(rawModule, 'component_refs', 'componentRefs'),
     relatedComponents: [],

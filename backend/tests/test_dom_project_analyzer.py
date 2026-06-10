@@ -109,6 +109,11 @@ def test_repo_reader_merges_src_page_config_with_page_body(tmp_path) -> None:
         '<template><view><button data-testid="question-submit">提交</button></view></template>',
         encoding="utf-8",
     )
+    helper_file = source_root / "pages/question/mixin.vue"
+    helper_file.write_text(
+        '<template><view><button data-testid="helper-action">辅助</button></view></template>',
+        encoding="utf-8",
+    )
 
     summary = RepoReader().summarize(str(frontend))
 
@@ -121,6 +126,97 @@ def test_repo_reader_merges_src_page_config_with_page_body(tmp_path) -> None:
     assert page_modules[0]["source_file"] == "src/pages/question/index.vue"
     assert page_modules[0]["config_source_file"] == "src/pages.json"
     assert "question-submit" in page_modules[0]["preview"]["html"]
+    all_page_sources = {
+        module["source_file"]
+        for module in summary.dom_modules
+        if module["kind"] == "page"
+    }
+    assert all_page_sources == {"src/pages/question/index.vue"}
+
+
+def test_repo_reader_does_not_promote_scripts_without_page_evidence(tmp_path) -> None:
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "pages.json").write_text(
+        json.dumps(
+            {
+                "pages": [
+                    {
+                        "path": "pages/home/index",
+                        "style": {"navigationBarTitleText": "首页"},
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    page_file = frontend / "pages/home/index.vue"
+    page_file.parent.mkdir(parents=True)
+    page_file.write_text("<template><view>首页</view></template>", encoding="utf-8")
+
+    for file_name in ["mergeConfig.js", "mixin.js", "mpMixin.ts", "mpShare.js"]:
+        script = frontend / "pages/home" / file_name
+        script.write_text(
+            "export default { path: '/internal/helper', url: '/internal/helper' }\n",
+            encoding="utf-8",
+        )
+
+    summary = RepoReader().summarize(str(frontend))
+
+    page_sources = {
+        module["source_file"]
+        for module in summary.dom_modules
+        if module["kind"] == "page"
+    }
+    assert page_sources == {"pages/home/index.vue"}
+    component_sources = {
+        module["source_file"]
+        for module in summary.dom_modules
+        if module["kind"] == "component"
+    }
+    assert not component_sources & {
+        "pages/home/mergeConfig.js",
+        "pages/home/mixin.js",
+        "pages/home/mpMixin.ts",
+        "pages/home/mpShare.js",
+    }
+
+
+def test_repo_reader_keeps_real_router_script_as_page_evidence(tmp_path) -> None:
+    router = tmp_path / "src/router/index.ts"
+    router.parent.mkdir(parents=True)
+    router.write_text(
+        """
+        import { createRouter } from 'vue-router';
+        export const routes = [{ path: '/dashboard', component: DashboardPage }];
+        export default createRouter({ routes });
+        """,
+        encoding="utf-8",
+    )
+
+    summary = RepoReader().summarize(str(tmp_path))
+
+    page_modules = [module for module in summary.dom_modules if module["kind"] == "page"]
+    assert [module["route"] for module in page_modules] == ["/dashboard"]
+    assert page_modules[0]["source_file"] == "src/router/index.ts"
+
+
+def test_repo_reader_requires_ui_evidence_for_conventional_script_pages(tmp_path) -> None:
+    helper = tmp_path / "pages/demo/mixin.js"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("export const option = { path: '/demo/helper' };\n", encoding="utf-8")
+    page = tmp_path / "pages/demo/index.js"
+    page.write_text(
+        "export default function Page() { return <main data-testid=\"demo-page\">页面</main>; }\n",
+        encoding="utf-8",
+    )
+
+    summary = RepoReader().summarize(str(tmp_path))
+
+    page_modules = [module for module in summary.dom_modules if module["kind"] == "page"]
+    assert [module["source_file"] for module in page_modules] == ["pages/demo/index.js"]
+    assert page_modules[0]["route"] == "/demo"
 
 
 def test_dom_compile_source_resolves_page_config_to_page_body(tmp_path) -> None:

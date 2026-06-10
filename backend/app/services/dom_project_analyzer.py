@@ -36,6 +36,27 @@ VIEW_SOURCE_EXTENSIONS = (
     ".ts",
 )
 PAGE_CONFIG_NAMES = {"app.json", "pages.json"}
+SCRIPT_EXTENSIONS = {".js", ".ts"}
+ROUTE_FILE_HINTS = {
+    "app",
+    "page",
+    "pages",
+    "route",
+    "router",
+    "routes",
+}
+ROUTE_API_HINTS = (
+    "<Route",
+    "BrowserRouter",
+    "HashRouter",
+    "createBrowserRouter",
+    "createRouter",
+    "createWebHashHistory",
+    "createWebHistory",
+    "definePageConfig",
+    "useRoutes",
+    "vue-router",
+)
 
 
 # 本文件保留 DOM 模块扫描门面，避免打断 RepoReader 旧入口；新增解析策略继续拆到同级服务。
@@ -63,7 +84,7 @@ class DomProjectAnalyzer:
             self._page_module(rel, route, source_line=line, framework=framework, content=content)
             for route, line, framework in self._route_candidates(content, rel)
         ]
-        conventional = self._convention_page_route(rel, root)
+        conventional = self._convention_page_route(rel, root, content)
         if conventional and not any(item.get("route") == conventional for item in modules):
             modules.append(
                 self._page_module(
@@ -121,11 +142,13 @@ class DomProjectAnalyzer:
         return modules
 
     def _route_candidates(self, content: str, rel: str) -> list[tuple[str, int, str]]:
+        if not _allows_inline_route_candidates(rel, content):
+            return []
+
         candidates: list[tuple[str, int, str]] = []
         patterns = [
-            re.compile(r"\bpath\s*[:=]\s*['\"]([^'\"]+)['\"]"),
             re.compile(r"<Route\b[^>]*\bpath\s*=\s*['\"]([^'\"]+)['\"]", re.I),
-            re.compile(r"\burl\s*[:=]\s*['\"](/[^'\"]+)['\"]"),
+            re.compile(r"\bpath\s*[:=]\s*['\"]([^'\"]+)['\"]"),
         ]
         framework = self._framework_for_file(rel, content)
         for line_number, line in enumerate(content.splitlines(), start=1):
@@ -209,18 +232,20 @@ class DomProjectAnalyzer:
             return _contains_ui_markup(content)
         return _contains_ui_markup(content) and bool(_ui_hints(content))
 
-    def _convention_page_route(self, rel: str, root: Path) -> str | None:
+    def _convention_page_route(self, rel: str, root: Path, content: str) -> str | None:
         lowered = rel.lower()
         config_route = _config_backed_page_route(rel, root)
         if config_route:
             return config_route
+        if _nearest_page_config_parent(rel, root) is not None:
+            return None
         if lowered.startswith("pages/"):
             if _has_page_config(root):
-                return "/" + _strip_view_extension(rel)
-            return _route_from_page_file(rel.removeprefix("pages/"))
+                return None
+            return _route_from_page_file(rel.removeprefix("pages/")) if _has_page_source_evidence(rel, content) else None
         if "/pages/" in f"/{lowered}":
             tail = rel.split("/pages/", 1)[1]
-            return _route_from_page_file(tail)
+            return _route_from_page_file(tail) if _has_page_source_evidence(rel, content) else None
         if lowered.startswith("app/") and rel.rsplit("/", 1)[-1].split(".", 1)[0] == "page":
             return _route_from_app_page_file(rel.removeprefix("app/"))
         if "/app/" in f"/{lowered}" and rel.rsplit("/", 1)[-1].split(".", 1)[0] == "page":
@@ -382,6 +407,36 @@ def _looks_like_user_route(route: str) -> bool:
     if route.startswith(("http://", "https://")):
         return False
     return not any(token in route for token in ["${", "{{", "node_modules"])
+
+
+def _allows_inline_route_candidates(rel: str, content: str) -> bool:
+    suffix = Path(rel).suffix.lower()
+    if suffix in {".jsx", ".tsx"}:
+        return any(token in content for token in ROUTE_API_HINTS)
+    if suffix in SCRIPT_EXTENSIONS:
+        return _looks_like_route_definition_file(rel, content)
+    return suffix in {".vue", ".svelte", ".html"} and any(token in content for token in ROUTE_API_HINTS)
+
+
+def _has_page_source_evidence(rel: str, content: str) -> bool:
+    suffix = Path(rel).suffix.lower()
+    if suffix in {".vue", ".nvue", ".wxml", ".axml", ".svelte", ".html"}:
+        return True
+    if suffix in {".jsx", ".tsx", ".js", ".ts"}:
+        return _contains_ui_markup(content) or any(token in content for token in ROUTE_API_HINTS)
+    return False
+
+
+def _looks_like_route_definition_file(rel: str, content: str) -> bool:
+    path = Path(rel)
+    parts = {part.lower() for part in path.with_suffix("").parts}
+    stem = path.stem.lower()
+    if not (parts & ROUTE_FILE_HINTS or any(hint in stem for hint in ROUTE_FILE_HINTS)):
+        return False
+    return any(token in content for token in ROUTE_API_HINTS) or re.search(
+        r"\broutes?\s*[:=]\s*\[",
+        content,
+    ) is not None
 
 
 def _unique_route_candidates(candidates: list[tuple[str, int, str]]) -> list[tuple[str, int, str]]:

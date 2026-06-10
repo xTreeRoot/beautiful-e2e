@@ -223,6 +223,7 @@ function DomModuleList({
                     <Tag color={module.moduleType === 'page' ? 'blue' : undefined}>
                       {module.moduleType === 'page' ? '页面' : '组件'}
                     </Tag>
+                    <CompileStatusTag module={module} />
                     <Tag>{entrypointTargetsForModule(module).length} 入口</Tag>
                     <Tag>{module.targetCount} 目标</Tag>
                     {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 组件</Tag> : null}
@@ -415,6 +416,7 @@ function DomEvidencePanel({
           <Tag color={module.moduleType === 'page' ? 'blue' : undefined}>
             {module.moduleType === 'page' ? '页面模块' : '组件模块'}
           </Tag>
+          <CompileStatusTag module={module} />
           <Tag>{scopeTargets.length} DOM 目标</Tag>
           <Tag>{entrypointTargetsForModule(module).length} 入口候选</Tag>
           {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 联动组件</Tag> : null}
@@ -469,6 +471,10 @@ function DomTargetDetailCard({ target }: { target: DomTargetNode }) {
       {target.hint ? <Fact label="代码片段" value={target.hint} code multiline /> : null}
     </div>
   );
+}
+
+function CompileStatusTag({ module }: { module: DomFileGroup }) {
+  return module.isCompiled ? <Tag color="success">已编译</Tag> : <Tag>未编译</Tag>;
 }
 
 function DomTargetCardList({
