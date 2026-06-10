@@ -179,12 +179,14 @@
 }
 
 .dom-kind-tags.ant-space,
-.dom-evidence-tags.ant-space {
+.dom-evidence-tags.ant-space,
+.dom-related-component-strip.ant-space {
   min-width: 0;
 }
 
 .dom-kind-tags .ant-tag,
-.dom-evidence-tags .ant-tag {
+.dom-evidence-tags .ant-tag,
+.dom-related-component-strip .ant-tag {
   max-width: 100%;
   margin-inline-end: 0;
   overflow: hidden;
@@ -195,6 +197,10 @@
   display: grid;
   gap: 2px;
   margin: 10px 10px 0;
+}
+
+.dom-related-component-strip.ant-space {
+  padding-top: 4px;
 }
 
 .dom-card-section {

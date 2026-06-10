@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.services.dom_component_refs import component_references
+
 
 DOM_COMPILATION_USAGE_KEY = "dom_compilation"
 
@@ -36,6 +38,7 @@ VIEW_SOURCE_EXTENSIONS = (
 PAGE_CONFIG_NAMES = {"app.json", "pages.json"}
 
 
+# 本文件保留 DOM 模块扫描门面，避免打断 RepoReader 旧入口；新增解析策略继续拆到同级服务。
 class DomProjectAnalyzer:
     """识别前端项目中的用户可见页面和组件，并生成系统内可渲染草图。
 
@@ -146,10 +149,11 @@ class DomProjectAnalyzer:
     ) -> dict[str, Any]:
         name = title or _route_name(route) or _file_name(source_file)
         hints = _ui_hints(content)
+        component_refs = component_references(content)
         evidence = [f"页面入口：{route}", f"来源：{source_file}:{source_line}"]
         if hints:
             evidence.extend(hints[:4])
-        return {
+        module = {
             "id": _stable_id("page", source_file, route),
             "kind": "page",
             "name": name,
@@ -160,10 +164,14 @@ class DomProjectAnalyzer:
             "evidence": evidence,
             "preview": self._preview_payload(name=name, module_kind="page", route=route, hints=hints),
         }
+        if component_refs:
+            module["component_refs"] = component_refs
+        return module
 
     def _component_module(self, source_file: str, content: str) -> dict[str, Any]:
         name = _file_name(source_file)
         hints = _ui_hints(content)
+        component_refs = component_references(content)
         return {
             "id": _stable_id("component", source_file, name),
             "kind": "component",
@@ -173,6 +181,7 @@ class DomProjectAnalyzer:
             "source_file": source_file,
             "framework": self._framework_for_file(source_file, content),
             "evidence": [f"组件来源：{source_file}", *hints[:5]],
+            "component_refs": component_refs,
             "preview": self._preview_payload(name=name, module_kind="component", route=None, hints=hints),
         }
 
@@ -318,7 +327,10 @@ def _config_backed_page_route(rel: str, root: Path) -> str | None:
         route_path = Path(rel).relative_to(config_parent).as_posix()
     except ValueError:
         return None
-    return "/" + _strip_view_extension(route_path)
+    route = "/" + _strip_view_extension(route_path)
+    if route in _declared_page_routes(root / config_parent):
+        return route
+    return None
 
 
 def _nearest_page_config_parent(rel: str, root: Path) -> Path | None:
@@ -328,6 +340,23 @@ def _nearest_page_config_parent(rel: str, root: Path) -> Path | None:
         if any((root / parent / name).exists() for name in PAGE_CONFIG_NAMES):
             return parent
     return None
+
+
+def _declared_page_routes(config_dir: Path) -> set[str]:
+    routes: set[str] = set()
+    for name in PAGE_CONFIG_NAMES:
+        config_path = config_dir / name
+        if not config_path.exists():
+            continue
+        try:
+            parsed = json.loads(_strip_json_comments(config_path.read_text(encoding="utf-8", errors="ignore")))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        for route, _title in _page_entries_from_config(parsed):
+            routes.add("/" + route.strip("/"))
+    return routes
 
 
 def _route_from_app_page_file(tail: str) -> str | None:
@@ -465,6 +494,9 @@ def _merge_module_bucket(bucket: list[dict[str, Any]]) -> dict[str, Any]:
     base["source_file"] = _text(source_module.get("source_file")) or _text(base.get("source_file"))
     base["framework"] = _text(source_module.get("framework")) or _text(base.get("framework"))
     base["evidence"] = evidence
+    component_refs = _merged_text_list(bucket, "component_refs")
+    if component_refs:
+        base["component_refs"] = component_refs
     config_source_file = _first_text_value(bucket, "config_source_file")
     config_source = _first_text_value(bucket, "config_source")
     if config_source_file:
@@ -551,6 +583,16 @@ def _first_text_value(bucket: list[dict[str, Any]], field: str) -> str:
         if value:
             return value
     return ""
+
+
+def _merged_text_list(bucket: list[dict[str, Any]], field: str) -> list[str]:
+    values: list[str] = []
+    for module in bucket:
+        raw_values = module.get(field)
+        if not isinstance(raw_values, list):
+            continue
+        values.extend(_text(item) for item in raw_values)
+    return _unique_strings([value for value in values if value])
 
 
 def _canonical_page_route(route: str) -> str:

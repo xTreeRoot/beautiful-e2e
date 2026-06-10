@@ -23,6 +23,13 @@ import {
   type DomRepositoryGroup,
   type DomTargetNode
 } from '../lib/domTargetGraph';
+import {
+  entrypointTargetsForModule,
+  kindCountsForTargets,
+  relationshipsForModule,
+  targetsForModuleScope,
+  type DomRelationship
+} from '../lib/domModuleRelationships';
 import { DomPagePreviewCard } from './DomPagePreviewCard';
 import './projectDomGraph.css';
 
@@ -35,13 +42,6 @@ type ProjectDomGraphPanelProps = {
 };
 
 type ModuleKindTab = 'page' | 'component';
-
-type DomRelationship = {
-  id: string;
-  from: DomTargetNode;
-  to: DomTargetNode;
-  reason: string;
-};
 
 export function ProjectDomGraphPanel({
   repositories,
@@ -66,14 +66,18 @@ export function ProjectDomGraphPanel({
     () => visibleModules.find((file) => file.id === selectedModuleId) ?? visibleModules[0] ?? null,
     [selectedModuleId, visibleModules]
   );
+  const selectedScopeTargets = useMemo(
+    () => targetsForModuleScope(selectedModule),
+    [selectedModule]
+  );
   const selectedTarget = useMemo(
     () => (
-      selectedModule?.targets.find((target) => target.id === selectedTargetId)
+      selectedScopeTargets.find((target) => target.id === selectedTargetId)
       ?? entrypointTargetsForModule(selectedModule)[0]
-      ?? selectedModule?.targets[0]
+      ?? selectedScopeTargets[0]
       ?? null
     ),
-    [selectedModule, selectedTargetId]
+    [selectedModule, selectedScopeTargets, selectedTargetId]
   );
 
   const handleSelectModule = (module: DomFileGroup) => {
@@ -221,6 +225,7 @@ function DomModuleList({
                     </Tag>
                     <Tag>{entrypointTargetsForModule(module).length} 入口</Tag>
                     <Tag>{module.targetCount} 目标</Tag>
+                    {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 组件</Tag> : null}
                     {domKindEntries(module.kindCounts).slice(0, 2).map(([kind, count]) => (
                       <Tag key={kind}>{domKindLabel(kind)} {count}</Tag>
                     ))}
@@ -250,6 +255,7 @@ function DomRelationshipPanel({
 
   const entrypoints = entrypointTargetsForModule(module);
   const relationships = relationshipsForModule(module);
+  const scopeTargets = targetsForModuleScope(module);
 
   return (
     <div className="dom-relationship-scroll">
@@ -257,6 +263,14 @@ function DomRelationshipPanel({
         <Text className="analysis-path">当前页面模块</Text>
         <Text strong>{module.moduleName}</Text>
         <Text className="analysis-path">{module.path}</Text>
+        {module.relatedComponents.length ? (
+          <Space size={4} wrap className="dom-related-component-strip">
+            {module.relatedComponents.slice(0, 6).map((component) => (
+              <Tag key={component.id}>{component.moduleName}</Tag>
+            ))}
+            {module.relatedComponents.length > 6 ? <Tag>+{module.relatedComponents.length - 6}</Tag> : null}
+          </Space>
+        ) : null}
       </div>
 
       <div className="dom-card-section">
@@ -290,7 +304,7 @@ function DomRelationshipPanel({
           />
         )) : (
           <DomTargetCardList
-            targets={module.targets}
+            targets={scopeTargets}
             selectedTargetId={selectedTargetId}
             onSelectTarget={onSelectTarget}
           />
@@ -356,6 +370,7 @@ function DomRelationshipCard({
         <Paragraph className="dom-card-note">{relationship.reason}</Paragraph>
       </button>
       <Space size={6} wrap className="dom-evidence-tags">
+        {relationship.scopeLabel ? <Tag color="geekblue">{relationship.scopeLabel}</Tag> : null}
         <Tag>{relationship.to.source || relationship.to.filePath}</Tag>
         {relationship.to.locator ? <Tag>{relationship.to.locator}</Tag> : null}
       </Space>
@@ -380,9 +395,10 @@ function DomEvidencePanel({
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无证据" />;
   }
 
-  const groupedTargets = domKindEntries(module.kindCounts).map(([kind]) => ({
+  const scopeTargets = targetsForModuleScope(module);
+  const groupedTargets = domKindEntries(kindCountsForTargets(scopeTargets)).map(([kind]) => ({
     kind,
-    targets: module.targets.filter((item) => item.kind === kind)
+    targets: scopeTargets.filter((item) => item.kind === kind)
   }));
 
   return (
@@ -399,8 +415,9 @@ function DomEvidencePanel({
           <Tag color={module.moduleType === 'page' ? 'blue' : undefined}>
             {module.moduleType === 'page' ? '页面模块' : '组件模块'}
           </Tag>
-          <Tag>{module.targetCount} DOM 目标</Tag>
+          <Tag>{scopeTargets.length} DOM 目标</Tag>
           <Tag>{entrypointTargetsForModule(module).length} 入口候选</Tag>
+          {module.relatedComponents.length ? <Tag>{module.relatedComponents.length} 联动组件</Tag> : null}
         </Space>
       </div>
 
@@ -515,43 +532,6 @@ function Fact({
       )}
     </div>
   );
-}
-
-function entrypointTargetsForModule(module: DomFileGroup | null): DomTargetNode[] {
-  if (!module) return [];
-  const entryKinds = new Set(['route', 'testid', 'aria-label']);
-  const primary = module.targets.filter((target) => entryKinds.has(target.kind));
-  if (primary.length) return primary.slice(0, 8);
-  return module.targets.filter((target) => target.stability !== 'low').slice(0, 4);
-}
-
-function relationshipsForModule(module: DomFileGroup | null): DomRelationship[] {
-  if (!module) return [];
-  const entrypoints = entrypointTargetsForModule(module);
-  if (!entrypoints.length) return [];
-  const primaryEntry = entrypoints[0];
-  return module.targets
-    .filter((target) => target.id !== primaryEntry.id)
-    .slice(0, 24)
-    .map((target) => ({
-      id: `${primaryEntry.id}->${target.id}`,
-      from: entrypoints.find((entry) => entry.kind === 'route') ?? primaryEntry,
-      to: target,
-      reason: relationshipReason(target)
-    }));
-}
-
-function relationshipReason(target: DomTargetNode): string {
-  if (target.kind === 'placeholder' || target.kind === 'name') {
-    return '该目标看起来是表单输入或参数承载点，适合作为填充步骤或前置数据入口。';
-  }
-  if (target.kind === 'testid' || target.kind === 'aria-label') {
-    return '该目标具备较稳定的自动化定位特征，适合作为点击、断言或关键状态锚点。';
-  }
-  if (target.kind === 'id') {
-    return '该目标来自页面 id，稳定性需要结合源码语义复核，可作为候选定位。';
-  }
-  return '该目标与当前模块入口同源，可作为后续步骤或断言的候选证据。';
 }
 
 function iconForDomKind(kind: string): ReactNode {

@@ -1,4 +1,10 @@
 import type { DomModuleCompileMode, Repository } from '../api';
+import { linkRelatedComponents } from './domComponentRelations';
+
+/**
+ * 本文件保留 DOM 图谱兼容门面，旧版扁平目标和新版模块索引都从这里进入。
+ * 页面-组件匹配和链路推导已拆到独立 lib，后续新增规则继续外移。
+ */
 
 export type DomTargetKind =
   | 'testid'
@@ -27,6 +33,16 @@ export type DomTargetNode = {
   stability: 'high' | 'medium' | 'low';
 };
 
+export type DomRelatedComponent = {
+  id: string;
+  moduleName: string;
+  moduleType: 'component';
+  path: string;
+  targetCount: number;
+  kindCounts: Record<string, number>;
+  targets: DomTargetNode[];
+};
+
 export type DomFileGroup = {
   id: string;
   repositoryId: string;
@@ -42,6 +58,8 @@ export type DomFileGroup = {
   previewSource: string | null;
   previewStrategy: string | null;
   evidence: string[];
+  componentRefs: string[];
+  relatedComponents: DomRelatedComponent[];
   path: string;
   targetCount: number;
   kindCounts: Record<string, number>;
@@ -272,6 +290,8 @@ function ensureFileGroup(
     previewSource: null,
     previewStrategy: null,
     evidence: [],
+    componentRefs: [],
+    relatedComponents: [],
     path: filePath,
     targetCount: 0,
     kindCounts: {},
@@ -286,11 +306,12 @@ function repositoryFromFiles(
   repository: DomRepositoryGroup,
   files: DomFileGroup[]
 ): DomRepositoryGroup {
-  const targets = files.flatMap((file) => file.targets);
+  const linkedFiles = linkRelatedComponents(files);
+  const targets = linkedFiles.flatMap((file) => file.targets);
   return {
     ...repository,
-    files,
-    fileCount: files.length,
+    files: linkedFiles,
+    fileCount: linkedFiles.length,
     targetCount: targets.length,
     kindCounts: countKinds(targets)
   };
@@ -301,6 +322,7 @@ function fileFromTargets(file: DomFileGroup, targets: DomTargetNode[]): DomFileG
   return {
     ...file,
     targets,
+    relatedComponents: [],
     targetCount: targets.length,
     kindCounts: countKinds(targets)
   };
@@ -375,9 +397,9 @@ function repositoriesWithDomModules(
       const rawModules = domModulesFromRepository(repository);
       if (!rawModules.length) return null;
       const repositoryGroup = ensureRepositoryGroup(new Map(), repository);
-      const files = rawModules
+      const files = linkRelatedComponents(rawModules
         .map((module, index) => domFileGroupFromModule(repositoryGroup, module, extractedTargets, index))
-        .filter((module): module is DomFileGroup => Boolean(module))
+        .filter((module): module is DomFileGroup => Boolean(module)))
         .sort(compareModules);
       const repositoryTargets = files.flatMap((file) => file.targets);
       return {
@@ -450,6 +472,8 @@ function domFileGroupFromModule(
     previewSource: cleanText(rawPreview.source_file) || null,
     previewStrategy: cleanText(rawPreview.strategy) || null,
     evidence: evidenceFromModule(rawModule),
+    componentRefs: textListFromModule(rawModule, 'component_refs', 'componentRefs'),
+    relatedComponents: [],
     path: sourceFile || source || name,
     targetCount: finalTargets.length,
     kindCounts: countKinds(finalTargets),
@@ -509,6 +533,16 @@ function evidenceFromModule(rawModule: Record<string, unknown>): string[] {
   const evidence = rawModule.evidence;
   if (!Array.isArray(evidence)) return [];
   return evidence.map((item) => String(item ?? '').trim()).filter(Boolean);
+}
+
+function textListFromModule(
+  rawModule: Record<string, unknown>,
+  snakeKey: string,
+  camelKey: string
+): string[] {
+  const rawValues = rawModule[snakeKey] ?? rawModule[camelKey];
+  if (!Array.isArray(rawValues)) return [];
+  return uniqueStrings(rawValues.map((item) => String(item ?? '').trim()).filter(Boolean));
 }
 
 function parseSourceLocation(source: string): SourceLocation {
@@ -618,6 +652,18 @@ function kindWeight(kind: string): number {
 function cleanText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  values.forEach((value) => {
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    unique.push(value);
+  });
+  return unique;
+}
+
 
 function escapeCssAttributeValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');

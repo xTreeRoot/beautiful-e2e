@@ -51,7 +51,18 @@ def test_repo_reader_extracts_only_config_pages_with_page_source(tmp_path) -> No
     page_file = frontend / "pages/home/index.vue"
     page_file.parent.mkdir(parents=True)
     page_file.write_text(
-        '<template><button data-testid="primary-action" aria-label="确认">确认</button></template>',
+        (
+            "<template><view>"
+            '<button data-testid="primary-action" aria-label="确认">确认</button>'
+            "<user-card />"
+            "</view></template>"
+        ),
+        encoding="utf-8",
+    )
+    component_file = frontend / "components/user-card.vue"
+    component_file.parent.mkdir(parents=True)
+    component_file.write_text(
+        '<template><view><button data-testid="component-action">操作</button></view></template>',
         encoding="utf-8",
     )
 
@@ -66,9 +77,12 @@ def test_repo_reader_extracts_only_config_pages_with_page_source(tmp_path) -> No
     assert home_module["name"] == "首页"
     assert home_module["source_file"] == "pages/home/index.vue"
     assert home_module["config_source_file"] == "pages.json"
+    assert "user-card" in home_module["component_refs"]
     assert home_module["preview"]["ai_usage_key"] == "dom_compilation"
     assert "首页" in home_module["preview"]["html"]
     assert "primary-action" in home_module["preview"]["html"]
+    component_modules = [module for module in summary.dom_modules if module["kind"] == "component"]
+    assert [module["source_file"] for module in component_modules] == ["components/user-card.vue"]
 
 
 def test_repo_reader_merges_src_page_config_with_page_body(tmp_path) -> None:
